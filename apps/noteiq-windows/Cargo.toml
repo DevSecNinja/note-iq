@@ -1,0 +1,61 @@
+[package]
+name = "noteiq-windows"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[features]
+default = []
+desktop = [
+    "dep:global-hotkey",
+    "dep:interprocess",
+    "dep:opener",
+    "dep:raw-window-handle",
+    "dep:rfd",
+    "dep:slint",
+    "dep:tray-icon",
+    "dep:windows-sys",
+    "dep:winreg",
+]
+
+[[bin]]
+name = "noteiq"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[dependencies]
+noteiq-core = { path = "../../crates/noteiq-core" }
+chrono.workspace = true
+directories.workspace = true
+iana-time-zone.workspace = true
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+global-hotkey = { version = "0.9", optional = true }
+interprocess = { version = "2.4", optional = true }
+opener = { version = "0.8", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+rfd = { version = "0.16", optional = true }
+slint = { version = "1.18", optional = true, features = ["backend-winit", "raw-window-handle-06"] }
+tray-icon = { version = "0.21", optional = true }
+windows-sys = { version = "0.61", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+winreg = { version = "0.55", optional = true }
+
+[build-dependencies]
+slint-build = "1.18"
+
+# Keep in step with `slint`; the testing backend must share its i-slint-core version.
+[target.'cfg(windows)'.dev-dependencies]
+i-slint-backend-testing = "1.18"
+
+[[test]]
+name = "ui_acceptance"
+required-features = ["desktop"]
+
+[lints]
+workspace = true

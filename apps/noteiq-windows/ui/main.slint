@@ -1,0 +1,323 @@
+import { Button, CheckBox, ComboBox, LineEdit, TextEdit } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "NoteIQ";
+    min-width: 640px;
+    min-height: 540px;
+    preferred-width: 760px;
+    preferred-height: 640px;
+    background: #f5f6f8;
+    forward-focus: note-editor;
+
+    in-out property <string> note-text;
+    in-out property <string> status-text: "Ready";
+    in-out property <string> meeting-label: "Checking for a meeting…";
+    in-out property <string> destination-label;
+    in-out property <string> open-label: "Open note";
+    in-out property <[string]> meeting-options;
+    in-out property <int> meeting-index: -1;
+    in-out property <bool> saved: false;
+    in-out property <bool> has-note: false;
+    in-out property <bool> settings-visible: false;
+    in-out property <bool> meeting-picker-visible: false;
+    in-out property <bool> auto-connect: true;
+    in-out property <bool> has-meeting: false;
+    in-out property <string> hotkey-text: "Win+Shift+N";
+    in-out property <bool> hotkey-enabled: true;
+    in-out property <bool> destination-error: false;
+
+    callback body-changed(string);
+    callback save-requested();
+    callback close-requested();
+    callback open-requested();
+    callback meeting-refresh-requested();
+    callback connect-requested(int);
+    callback disconnect-requested();
+    callback settings-requested(bool);
+    callback destination-requested();
+    callback auto-connect-changed(bool);
+    callback hotkey-changed(string);
+    callback hotkey-enabled-changed(bool);
+    callback new-note-requested();
+
+    FocusScope {
+        forward-focus: note-editor;
+
+        key-pressed(event) => {
+            if event.modifiers.control && (event.text == "s" || event.text == "S") {
+                root.save-requested();
+                accept
+            }
+            if event.modifiers.control && (event.text == "n" || event.text == "N") {
+                root.new-note-requested();
+                accept
+            }
+            reject
+        }
+
+        Rectangle {
+            background: #f5f6f8;
+
+            VerticalLayout {
+                padding: 22px;
+                spacing: 16px;
+
+                HorizontalLayout {
+                    height: 42px;
+                    spacing: 10px;
+
+                    Rectangle {
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 10px;
+                        background: #4f46e5;
+                        Text {
+                            text: "N";
+                            color: white;
+                            font-family: "Segoe UI Variable";
+                            font-size: 20px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 1px;
+                        Text {
+                            text: "NoteIQ";
+                            color: #20232a;
+                            font-family: "Segoe UI Variable";
+                            font-size: 19px;
+                            font-weight: 650;
+                        }
+                        Text {
+                            text: "Quick capture";
+                            color: #5f6470;
+                            font-size: 12px;
+                        }
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    Button {
+                        text: "Settings";
+                        clicked => {
+                            root.settings-visible = !root.settings-visible;
+                            root.settings-requested(root.settings-visible);
+                        }
+                    }
+                    Button {
+                        text: "×";
+                        width: 36px;
+                        accessible-label: "Close window";
+                        clicked => { root.close-requested(); }
+                    }
+                }
+
+                Rectangle {
+                    visible: !root.settings-visible;
+                    background: #ffffff;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: #e6e8ed;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 12px;
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: root.meeting-label;
+                                color: #31343b;
+                                font-size: 14px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Button {
+                                text: "Find meeting";
+                                clicked => { root.meeting-refresh-requested(); }
+                            }
+                            Button {
+                                text: "Connect";
+                                visible: root.meeting-picker-visible;
+                                clicked => { root.connect-requested(root.meeting-index); }
+                            }
+                            Button {
+                                text: "No meeting";
+                                visible: root.has-meeting || root.meeting-picker-visible;
+                                clicked => { root.disconnect-requested(); }
+                            }
+                        }
+
+                        ComboBox {
+                            visible: root.meeting-picker-visible;
+                            model: root.meeting-options;
+                            current-index <=> root.meeting-index;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    visible: root.settings-visible;
+                    background: #ffffff;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: #e6e8ed;
+
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 14px;
+
+                    Text {
+                        text: "Capture settings";
+                        color: #20232a;
+                        font-size: 17px;
+                        font-weight: 650;
+                    }
+                    Text {
+                        text: "Notes are saved to one folder only.";
+                        color: #5f6470;
+                        font-size: 13px;
+                    }
+                    Rectangle {
+                        background: #f7f7f9;
+                        border-radius: 9px;
+                        border-width: 1px;
+                        border-color: #ebecef;
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 8px;
+                            Text {
+                                text: root.destination-label;
+                                color: #383b43;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                overflow: elide;
+                            }
+                            Button {
+                                text: "Choose folder";
+                                clicked => { root.destination-requested(); }
+                            }
+                        }
+                    }
+                    CheckBox {
+                        text: "Connect to my current meeting automatically";
+                        checked: root.auto-connect;
+                        toggled => { root.auto-connect-changed(self.checked); }
+                    }
+                    CheckBox {
+                        text: "Enable the global capture shortcut";
+                        checked: root.hotkey-enabled;
+                        toggled => {
+                            root.hotkey-enabled = self.checked;
+                            root.hotkey-enabled-changed(self.checked);
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        Text {
+                            text: "Capture shortcut";
+                            color: #383b43;
+                            font-size: 13px;
+                            vertical-alignment: center;
+                        }
+                        LineEdit {
+                            text <=> root.hotkey-text;
+                            placeholder-text: "Win+Shift+N";
+                            accessible-label: "Capture shortcut";
+                            horizontal-stretch: 1;
+                            accepted(text) => { root.hotkey-changed(text); }
+                        }
+                    }
+                    Text {
+                        text: "Press Enter or Done to apply the shortcut.";
+                        color: #5f6470;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "WorkIQ is provided by Scout. NoteIQ never installs or copies it.";
+                        color: #5f6470;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { vertical-stretch: 1; }
+                    Button {
+                        text: "Done";
+                        clicked => {
+                            root.hotkey-changed(root.hotkey-text);
+                            root.settings-visible = false;
+                            root.settings-requested(false);
+                            note-editor.focus();
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                visible: !root.settings-visible;
+                background: #ffffff;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: #e6e8ed;
+                vertical-stretch: 1;
+
+                note-editor := TextEdit {
+                    x: 16px;
+                    y: 14px;
+                    width: parent.width - 32px;
+                    height: parent.height - 28px;
+                    text <=> root.note-text;
+                    accessible-label: "Note contents";
+                    font-family: "Segoe UI Variable";
+                    font-size: 15px;
+                    edited => { root.body-changed(self.text); }
+                }
+            }
+
+            HorizontalLayout {
+                visible: !root.settings-visible;
+                height: 38px;
+                spacing: 8px;
+
+                Text {
+                    text: root.has-note ? (root.saved ? "Saved" : "Unsaved") : "Draft";
+                    color: root.saved ? #166534 : #b45309;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.status-text;
+                    color: #5f6470;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Button {
+                    text: root.open-label;
+                    visible: root.has-note;
+                    clicked => { root.open-requested(); }
+                }
+                fix-folder := Button {
+                    text: "Choose folder";
+                    visible: root.destination-error;
+                    clicked => { root.destination-requested(); }
+                }
+                Button {
+                    text: "Save";
+                    clicked => { root.save-requested(); }
+                }
+                Button {
+                    text: "Close";
+                    clicked => { root.close-requested(); }
+                }
+            }
+        }
+    }
+
+    }
+}
