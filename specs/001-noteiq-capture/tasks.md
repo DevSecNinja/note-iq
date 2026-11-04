@@ -165,6 +165,8 @@ correlation IDs while asserting note bodies and meeting values are absent.
 - [x] T054 Run `cargo fmt --all -- --check`, workspace tests, and the Windows ARM64 MSVC target check
 - [x] T055 Run `cargo test -p noteiq-core` in WSL and `cargo build --release --target aarch64-pc-windows-msvc` on Windows
 - [x] T056 Verify the Spec Kit artifacts and requirement checklist in `specs/001-noteiq-capture/`
+- [x] T057 [P] Test that a failed autosave backs off, keeps the draft, never throttles explicit saves, and recovers once the destination returns in `crates/noteiq-core/tests/autosave_tests.rs` and `crates/noteiq-core/tests/save_lifecycle_tests.rs`
+- [x] T058 Pause automatic retries with a growing delay after a failed save in `crates/noteiq-core/src/autosave.rs` and `crates/noteiq-core/src/capture.rs`
 
 ## Dependencies and Execution Order
 
@@ -223,7 +225,14 @@ close-only empty-note deletion. Validate in WSL before building Windows UI.
 - Tests MUST precede matching implementation and fail for the intended missing
   behavior before implementation starts.
 - No live calendar data, note body, or credentials may be used in fixtures/logs.
-- Native Windows ARM64 release build remains blocked: Visual Studio Build Tools
-  installation returned exit code 1602 twice, and no Build Tools installation
-  is present. Portable workspace tests and the ARM64 MSVC target `cargo check`
-  pass from WSL.
+- Native Windows ARM64 release build, core and UI tests, and Clippy with
+  `-D warnings` pass. The earlier toolchain installation blocker is resolved.
+  Portable workspace tests and formatting also pass from WSL.
+- A synthetic-data Windows smoke test verifies registered URI activation from
+  a foreground launcher, preservation of an open capture, fresh capture after
+  close, URI source metadata, autosave, and deletion of erased notes only on close.
+- A live-meeting acceptance check on the real calendar (UI Automation only, a
+  temporary destination, no meeting values printed or kept) verifies automatic
+  connect, the saved meeting block, No meeting removing it from the saved file,
+  and Find meeting then Connect restoring it. A missing-destination run verifies
+  that autosave pauses retries (5 s, then 10 s) and recovers once the folder returns.

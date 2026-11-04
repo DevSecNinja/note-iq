@@ -80,7 +80,7 @@ notes, one optional WorkIQ child process for bounded meeting lookups.
 - `destination.rs`: selected-root resolution, safe slug, collision reservation,
   atomic write, empty-note close cleanup.
 - `settings.rs`: local TOML schema, defaults, OneDrive candidate discovery.
-- `autosave.rs`: deterministic debounce/interval state machine; UI owns timers.
+- `autosave.rs`: deterministic debounce/interval/retry-backoff state machine; UI owns timers.
 - `meeting.rs`: candidate parsing, overlap/match selection, explicit-decision
   precedence, metadata disconnect.
 - `workiq.rs`: MCP JSON-RPC stdio handshake, tools/list, runtime capability

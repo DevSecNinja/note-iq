@@ -25,6 +25,8 @@ When NoteIQ is running, press **Win+Shift+N** to show its capture window.
 menu provides Show, New note, and Quit actions. The app registers
 `noteiq://new` for the current Windows user; a PowerToys Command Palette
 command can invoke `noteiq.exe new` or the registered URI.
+The equivalent `noteiq://new/` form added by the Windows shell is also supported;
+additional paths, query parameters, and fragments are rejected.
 
 **Close** finishes the capture and hides the window; NoteIQ keeps running in
 the tray so the shortcut stays available. Use **Quit** in the tray menu to
@@ -40,6 +42,16 @@ already used by another app" and keeps working without a shortcut. Open
 or **Done** to apply it. NoteIQ accepts a letter, digit, or F-key combined
 with Ctrl, Alt, Shift, or Win. If the new shortcut is also taken, the previous
 one stays active.
+
+**OneNote conflict.** Desktop OneNote's "Send to OneNote" tray helper
+(`ONENOTEM.EXE`) registers **Win+Shift+N** (new side note) and **Win+Alt+N**
+(open OneNote). To release them, open OneNote, choose **File > Options >
+Display**, and clear **Place OneNote icon in the notification area of the
+taskbar** (stored as
+`HKCU\Software\Microsoft\Office\16.0\OneNote\Options\Other\RunSystemTrayApp = 0`).
+Then end `ONENOTEM.EXE` or sign out and back in, and restart NoteIQ. You lose
+OneNote's side-note and open-OneNote shortcuts and its tray icon; select the
+option again to get them back.
 
 Portable tests and formatting can run in WSL:
 
@@ -74,6 +86,10 @@ tags, and—when connected—meeting details. The body remains ordinary Markdown
 `Ctrl+S` saves without closing; autosave runs after an 800 ms pause and at
 least every 10 seconds during continuous typing. An empty saved note is
 retained while editing and deleted when the capture is closed.
+
+If the destination folder is unavailable, NoteIQ keeps your text and shows
+**Choose folder**. It retries automatically after 5 seconds, doubling the pause
+up to one minute, so the log is not flooded; **Save** or `Ctrl+S` retries at once.
 
 ## Scout and WorkIQ
 

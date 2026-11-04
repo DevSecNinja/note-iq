@@ -172,6 +172,9 @@ are described.
 - Slugs are safe for Windows paths, preserve supported Unicode, and collision
   handling never overwrites unrelated files.
 - The selected root can disappear between settings and save.
+- A destination that stays unavailable is not retried on every timer tick:
+  automatic retries pause with a growing delay, an explicit save always retries
+  at once, and a successful save resets the delay.
 - WorkIQ output can be malformed, oversized, delayed, unauthenticated, or
   changed in a later version.
 - A user who starts, clears, then closes a note never loses the file during the
