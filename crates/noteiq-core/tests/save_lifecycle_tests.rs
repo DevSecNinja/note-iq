@@ -1,8 +1,35 @@
 mod common;
 
 use common::{capture, instant};
+use noteiq_core::capture::CaptureController;
 use noteiq_core::destination::{Destination, DestinationError, save_capture};
+use std::time::{Duration, Instant};
 use tempfile::tempdir;
+
+#[test]
+fn a_failed_save_pauses_autosave_retries_and_keeps_the_draft_until_the_destination_returns() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("notes");
+    let destination = Destination::new(root.clone());
+    let mut controller = CaptureController::new(capture());
+    controller.edit("Keep this draft", Instant::now());
+
+    assert!(controller.save(&destination, instant()).is_err());
+    let after_failure = Instant::now();
+
+    assert!(controller.is_dirty());
+    assert_eq!(controller.capture.body, "Keep this draft");
+    assert!(
+        !controller.autosave_due(after_failure + Duration::from_secs(1)),
+        "a broken destination is not retried on every timer tick"
+    );
+    assert!(controller.autosave_due(after_failure + Duration::from_secs(6)));
+
+    std::fs::create_dir(&root).unwrap();
+    let path = controller.save(&destination, instant()).unwrap().unwrap();
+    assert!(path.exists(), "an explicit save is never throttled");
+    assert!(!controller.is_dirty());
+}
 
 #[test]
 fn external_replacement_is_reported_without_overwriting_or_retargeting_the_note() {

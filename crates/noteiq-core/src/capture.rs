@@ -45,7 +45,13 @@ impl CaptureController {
         destination: &Destination,
         now: DateTime<FixedOffset>,
     ) -> Result<Option<std::path::PathBuf>, DestinationError> {
-        let result = save_capture(&mut self.capture, destination, now)?;
+        let result = match save_capture(&mut self.capture, destination, now) {
+            Ok(result) => result,
+            Err(error) => {
+                self.autosave.failed(Instant::now());
+                return Err(error);
+            }
+        };
         self.autosave.saved();
         Ok(result)
     }
