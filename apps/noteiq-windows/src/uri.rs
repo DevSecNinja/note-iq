@@ -18,6 +18,11 @@ pub fn register_protocol() -> Result<(), String> {
     protocol
         .set_value("URL Protocol", &"")
         .map_err(|_| "NoteIQ could not register its Command Palette link.")?;
+    let (icon, _) = protocol
+        .create_subkey("DefaultIcon")
+        .map_err(|_| "NoteIQ could not register its Command Palette icon.")?;
+    icon.set_value("", &format!("\"{}\",0", executable.display()))
+        .map_err(|_| "NoteIQ could not register its Command Palette icon.")?;
     let (command, _) = protocol
         .create_subkey("shell\\open\\command")
         .map_err(|_| "NoteIQ could not register its Command Palette link.")?;

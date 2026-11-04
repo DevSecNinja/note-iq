@@ -18,7 +18,13 @@ pub enum TrayAction {
 }
 
 impl TrayController {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(image: &slint::Image) -> Result<Self, String> {
+        let pixels = image
+            .to_rgba8()
+            .ok_or("The NoteIQ tray icon could not be decoded.")?;
+        let tray_image =
+            tray_icon::Icon::from_rgba(pixels.as_bytes().to_vec(), pixels.width(), pixels.height())
+                .map_err(|_| "The NoteIQ tray icon could not be created.")?;
         let menu = Menu::new();
         let show = MenuItem::new("Show NoteIQ", true, None);
         let new = MenuItem::new("New note", true, None);
@@ -29,10 +35,7 @@ impl TrayController {
             .map_err(|_| "The NoteIQ tray menu could not be created.")?;
         let icon = TrayIconBuilder::new()
             .with_tooltip("NoteIQ quick capture")
-            .with_icon(
-                tray_icon::Icon::from_rgba([79, 70, 229, 255].repeat(16 * 16), 16, 16)
-                    .map_err(|_| "The NoteIQ tray icon could not be created.")?,
-            )
+            .with_icon(tray_image)
             .with_menu(Box::new(menu))
             .build()
             .map_err(|_| "The NoteIQ tray icon could not be created.")?;

@@ -1,8 +1,13 @@
-use crate::{diagnostics::FailureClass, model::Meeting};
-use chrono::{DateTime, Datelike, Days, FixedOffset, NaiveDate, NaiveTime, TimeZone, Weekday};
+use crate::{
+    diagnostics::FailureClass,
+    model::{Invitee, InviteeRole, Meeting, Rsvp, format_contact},
+};
+use chrono::{
+    DateTime, Datelike, Days, FixedOffset, NaiveDate, NaiveTime, TimeDelta, TimeZone, Weekday,
+};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
@@ -16,7 +21,16 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MAX_MESSAGE_BYTES: u64 = 4 * 1024 * 1024;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 const RETRIEVAL_CONTENT_TYPE: &str = "application/vnd.ms-workiq.retrieval";
-const MEETING_QUERY: &str = "My calendar meetings today";
+/// WorkIQ returns at most about ten results per search, so focused queries for the current and
+/// next meetings run alongside the broader day query. All three run concurrently.
+pub const MEETING_QUERIES: [&str; 3] = [
+    "My calendar meetings happening now",
+    "My calendar meetings starting in the next hour",
+    "My calendar meetings today",
+];
+/// Slack when comparing WorkIQ's `timeUntilMeeting` with a parsed start time; WorkIQ evaluates
+/// it a few seconds after NoteIQ captured `now`.
+const TIMING_TOLERANCE: TimeDelta = TimeDelta::minutes(5);
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// A cold WorkIQ meeting search was observed taking about 18 seconds.
 pub const DEFAULT_LOOKUP_TIMEOUT: Duration = Duration::from_secs(45);
@@ -28,7 +42,7 @@ pub struct MeetingSearchTool {
     pub meetings_capability: bool,
 }
 
-#[derive(Debug, Error)]
+#[derive(Clone, Debug, Error)]
 pub enum WorkiqError {
     #[error("The Scout WorkIQ executable was not found.")]
     ExecutableMissing,
@@ -168,11 +182,11 @@ fn schema_supports_meetings(schema: Option<&Value>) -> bool {
     schema.is_some_and(|schema| schema.to_string().contains("\"const\":\"Meetings\""))
 }
 
-/// Asks for today's meetings rather than "meetings active now": WorkIQ search ranks by
-/// relevance and may return upcoming meetings, so the current one is selected locally.
-pub fn meeting_search_arguments(tool: &MeetingSearchTool) -> Value {
+/// Builds the arguments for one of [`MEETING_QUERIES`]. WorkIQ search ranks by relevance, so
+/// the current meeting is still selected locally from the merged results.
+pub fn meeting_search_arguments(tool: &MeetingSearchTool, query: &str) -> Value {
     json!({
-        tool.query_property.clone(): MEETING_QUERY,
+        tool.query_property.clone(): query,
         "capabilities": [{"name": "Meetings"}],
         "strategy": "grounding"
     })
@@ -208,19 +222,155 @@ fn display_field(object: &serde_json::Map<String, Value>, keys: &[&str]) -> Opti
     })
 }
 
-fn parse_attendees(value: Option<&Value>) -> Vec<String> {
+fn parse_rsvp(value: &str) -> Option<Rsvp> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "accepted" => Some(Rsvp::Accepted),
+        "tentative" | "tentativelyaccepted" => Some(Rsvp::Tentative),
+        "declined" => Some(Rsvp::Declined),
+        "notresponded" | "not responded" => Some(Rsvp::NotResponded),
+        "organizer" | "meeting organizer" => Some(Rsvp::Organizer),
+        _ => None,
+    }
+}
+
+fn parse_invitees(value: Option<&Value>) -> Vec<Invitee> {
     value
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|attendee| {
-            attendee.as_str().map(str::to_owned).or_else(|| {
-                attendee
-                    .as_object()
-                    .and_then(|object| display_field(object, &["name", "displayName", "email"]))
+        .filter_map(|invitee| {
+            let (name, email) = person_details(invitee);
+            if name.is_none() && email.is_none() {
+                return None;
+            }
+            Some(Invitee {
+                name,
+                email,
+                role: match invitee.get("type").and_then(Value::as_str) {
+                    Some(role) if role.eq_ignore_ascii_case("required") => InviteeRole::Required,
+                    Some(role) if role.eq_ignore_ascii_case("optional") => InviteeRole::Optional,
+                    Some(role) if role.eq_ignore_ascii_case("resource") => InviteeRole::Resource,
+                    _ => InviteeRole::Unknown,
+                },
+                rsvp: invitee
+                    .pointer("/status/response")
+                    .and_then(Value::as_str)
+                    .and_then(parse_rsvp)
+                    .unwrap_or(Rsvp::Unknown),
+                has_attended: invitee.get("hasAttended").and_then(Value::as_bool),
             })
         })
         .collect()
+}
+
+/// Applies calendar RSVP details without discarding attendance observations from retrieval.
+pub fn apply_meeting_details(meeting: &mut Meeting, details: &Value) {
+    if let Some(organizer) = details.get("organizer").and_then(person_contact) {
+        meeting.organizer = Some(organizer);
+    }
+    if let Some(rsvp) = details
+        .pointer("/responseStatus/response")
+        .and_then(Value::as_str)
+        .and_then(parse_rsvp)
+    {
+        meeting.your_rsvp = Some(rsvp);
+        meeting.declined = rsvp == Rsvp::Declined;
+    }
+    if let Some(attendees) = details.get("attendees").filter(|value| value.is_array()) {
+        let mut invitees = parse_invitees(Some(attendees));
+        for invitee in &mut invitees {
+            let previous =
+                meeting
+                    .invitees
+                    .iter()
+                    .find(|previous| match (&invitee.email, &previous.email) {
+                        (Some(email), Some(previous)) => email.eq_ignore_ascii_case(previous),
+                        (None, None) => invitee.name == previous.name,
+                        _ => false,
+                    });
+            if let Some(previous) = previous {
+                invitee.has_attended = invitee.has_attended.or(previous.has_attended);
+                if invitee.rsvp == Rsvp::Unknown {
+                    invitee.rsvp = previous.rsvp;
+                }
+            }
+        }
+        meeting.invitees = invitees;
+    }
+}
+
+fn supports_event_fetch(tools: &Value) -> bool {
+    tools
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some("fetch")
+                    && tool
+                        .pointer("/inputSchema/properties/entityUrls/type")
+                        .and_then(Value::as_str)
+                        == Some("array")
+                    && tool
+                        .pointer("/inputSchema/properties/entityUrls/items/type")
+                        .and_then(Value::as_str)
+                        == Some("string")
+                    && tool
+                        .pointer("/inputSchema/required")
+                        .and_then(Value::as_array)
+                        .is_none_or(|required| {
+                            required
+                                .iter()
+                                .all(|field| field.as_str() == Some("entityUrls"))
+                        })
+            })
+        })
+}
+
+fn enrich_meeting_details(process: &mut McpProcess, meetings: &mut [Meeting], timeout: Duration) {
+    let urls = meetings
+        .iter()
+        .filter_map(|meeting| meeting.entity_url.as_deref())
+        .filter(|url| url.starts_with("/me/events/") || url.starts_with("/me/calendar/events/"))
+        .collect::<Vec<_>>();
+    let calls = urls
+        .chunks(5)
+        .map(|urls| json!({"name": "fetch", "arguments": {"entityUrls": urls}}))
+        .collect();
+    let responses = process.request_many("tools/call", calls, timeout);
+    for response in responses {
+        // WorkIQ can flag a whole batch as an error when only one row is throttled.
+        let rows = response
+            .as_ref()
+            .ok()
+            .and_then(|response| response.pointer("/result/structuredContent/results"))
+            .and_then(Value::as_array);
+        let Some(rows) = rows else {
+            tracing::warn!(
+                failure_class = "meeting_details_unavailable",
+                "Calendar RSVP details could not be retrieved"
+            );
+            continue;
+        };
+        for row in rows {
+            let status_code = row.get("statusCode").and_then(Value::as_u64);
+            let Some(details) = row
+                .get("data")
+                .filter(|_| status_code.is_some_and(|code| (200..300).contains(&code)))
+            else {
+                tracing::warn!(
+                    failure_class = "meeting_details_unavailable",
+                    status_code,
+                    "Calendar RSVP details could not be retrieved"
+                );
+                continue;
+            };
+            if let Some(meeting) = meetings.iter_mut().find(|meeting| {
+                details.get("id").and_then(Value::as_str) == Some(meeting.id.as_str())
+            }) {
+                apply_meeting_details(meeting, details);
+            }
+        }
+    }
 }
 
 fn collect_meetings(value: &Value, results: &mut Vec<Meeting>, incomplete: &mut bool) {
@@ -242,13 +392,13 @@ fn collect_meetings(value: &Value, results: &mut Vec<Meeting>, incomplete: &mut 
                         title,
                         start: Some(start),
                         end: Some(end),
-                        organizer: object
-                            .get("organizer")
-                            .and_then(|value| value.as_object())
-                            .and_then(|organizer| {
-                                display_field(organizer, &["name", "displayName", "email"])
-                            }),
-                        attendees: parse_attendees(object.get("attendees")),
+                        organizer: object.get("organizer").and_then(person_contact),
+                        invitees: parse_invitees(object.get("attendees")),
+                        your_rsvp: value
+                            .pointer("/responseStatus/response")
+                            .and_then(Value::as_str)
+                            .and_then(parse_rsvp),
+                        entity_url: None,
                         cancelled: object
                             .get("isCancelled")
                             .or_else(|| object.get("cancelled"))
@@ -304,9 +454,15 @@ pub fn parse_meeting_results(
         .and_then(|retrieval| retrieval.get("results"))
         .and_then(Value::as_array);
     if let Some(results) = retrieval_results {
+        let results = results
+            .iter()
+            .filter(|result| is_meeting_result(result))
+            .collect::<Vec<_>>();
+        let reference = reference_offset(&results, now);
+        let reference_now = now.with_timezone(&reference);
         let mut unparsed = 0_usize;
-        for result in results.iter().filter(|result| is_meeting_result(result)) {
-            match parse_retrieval_meeting(result, now) {
+        for result in results {
+            match parse_retrieval_meeting(result, reference_now, *now.offset()) {
                 Some(meeting) => meetings.push(meeting),
                 None => unparsed += 1,
             }
@@ -348,7 +504,101 @@ fn is_meeting_result(result: &Value) -> bool {
         .is_none_or(|kind| matches!(kind, "Meetings" | "Meeting" | "Events" | "Event"))
 }
 
-fn parse_retrieval_meeting(result: &Value, now: DateTime<FixedOffset>) -> Option<Meeting> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MeetingTiming {
+    InProgress,
+    Past,
+    StartsIn(TimeDelta),
+}
+
+/// Reads WorkIQ's timezone-independent `timeUntilMeeting`, for example `event is in progress`,
+/// `event is in the past`, `3 minutes` or `1 day, 3 hours and 53 minutes`.
+fn parse_time_until(text: &str) -> Option<MeetingTiming> {
+    let text = text.trim().to_ascii_lowercase();
+    if text.contains("in progress") {
+        return Some(MeetingTiming::InProgress);
+    }
+    if text.contains("in the past") {
+        return Some(MeetingTiming::Past);
+    }
+    let mut total = TimeDelta::zero();
+    for part in text.split(',').flat_map(|part| part.split(" and ")) {
+        let mut words = part.split_whitespace();
+        let (Some(amount), Some(unit), None) = (words.next(), words.next(), words.next()) else {
+            return None;
+        };
+        let amount = amount.parse::<i64>().ok()?;
+        total += match unit.trim_end_matches('s') {
+            "day" => TimeDelta::try_days(amount)?,
+            "hour" => TimeDelta::try_hours(amount)?,
+            "minute" => TimeDelta::try_minutes(amount)?,
+            "second" => TimeDelta::try_seconds(amount)?,
+            _ => return None,
+        };
+    }
+    Some(MeetingTiming::StartsIn(total))
+}
+
+fn retrieval_timing(result: &Value) -> Option<(String, Option<&str>, MeetingTiming)> {
+    let markdown = result.get("markdown").and_then(Value::as_str)?;
+    let (_, mut fields) = markdown_fields(markdown);
+    let timing = parse_time_until(fields.get("timeUntilMeeting")?)?;
+    let hint = result
+        .pointer("/resourceMetadata/meeting/startTime")
+        .and_then(Value::as_str);
+    Some((fields.remove("time")?, hint, timing))
+}
+
+fn timing_matches(result: &Value, reference_now: DateTime<FixedOffset>) -> bool {
+    let Some((time, hint, timing)) = retrieval_timing(result) else {
+        return false;
+    };
+    let Some((start, end)) = parse_time_range(&time, hint, reference_now) else {
+        return false;
+    };
+    match timing {
+        MeetingTiming::InProgress => {
+            start <= reference_now + TIMING_TOLERANCE && reference_now - TIMING_TOLERANCE < end
+        }
+        MeetingTiming::Past => end <= reference_now + TIMING_TOLERANCE,
+        MeetingTiming::StartsIn(delay) => {
+            (start - (reference_now + delay)).abs() <= TIMING_TOLERANCE
+        }
+    }
+}
+
+/// WorkIQ writes relative meeting times (`today at 1 PM`) in UTC, not the user's timezone.
+/// Each result's `timeUntilMeeting` confirms which reading is right, so a WorkIQ version that
+/// switches to local time is still read correctly. Ties keep the observed UTC behavior.
+fn reference_offset(results: &[&Value], now: DateTime<FixedOffset>) -> FixedOffset {
+    let utc = FixedOffset::east_opt(0).expect("UTC is a valid offset");
+    let local = *now.offset();
+    if local == utc {
+        return utc;
+    }
+    let score = |offset: FixedOffset| {
+        let reference_now = now.with_timezone(&offset);
+        results
+            .iter()
+            .filter(|result| timing_matches(result, reference_now))
+            .count()
+    };
+    let (utc_score, local_score) = (score(utc), score(local));
+    let reference = if local_score > utc_score { local } else { utc };
+    tracing::debug!(
+        utc_score,
+        local_score,
+        reference_offset_minutes = reference.local_minus_utc() / 60,
+        "Calibrated WorkIQ meeting times"
+    );
+    reference
+}
+
+fn parse_retrieval_meeting(
+    result: &Value,
+    reference_now: DateTime<FixedOffset>,
+    local: FixedOffset,
+) -> Option<Meeting> {
     let object = result.as_object()?;
     let id = string_field(object, &["resourceId", "entityUrl", "id"])
         .map(str::trim)
@@ -371,32 +621,34 @@ fn parse_retrieval_meeting(result: &Value, now: DateTime<FixedOffset>) -> Option
     let start_date_hint = metadata
         .and_then(|meeting| meeting.get("startTime"))
         .and_then(Value::as_str);
-    let (start, end) = parse_time_range(fields.get("time")?, start_date_hint, now)?;
+    let (start, end) = parse_time_range(fields.get("time")?, start_date_hint, reference_now)?;
+    let (start, end) = (start.with_timezone(&local), end.with_timezone(&local));
     let organizer = fields
         .get("organizer")
         .and_then(|value| parse_embedded_json(value))
-        .and_then(|organizer| person_name(&organizer));
-    let attendees = fields
+        .and_then(|organizer| person_contact(&organizer));
+    let invitees = fields
         .get("invitees")
         .and_then(|value| parse_embedded_json(value))
-        .and_then(|invitees| invitees.as_array().cloned())
-        .into_iter()
-        .flatten()
-        .filter_map(|invitee| person_name(&invitee))
-        .collect();
-    let declined = fields
+        .map(|invitees| parse_invitees(Some(&invitees)))
+        .unwrap_or_default();
+    let your_rsvp = fields
         .get("additionalMetadata")
         .and_then(|value| parse_embedded_json(value))
         .and_then(|metadata| metadata.as_array().cloned())
         .into_iter()
         .flatten()
-        .any(|item| {
-            item.get("key").and_then(Value::as_str) == Some("RSVP Info")
-                && item
-                    .get("value")
+        .find_map(|item| {
+            if item.get("key").and_then(Value::as_str) == Some("RSVP Info") {
+                item.get("value")
                     .and_then(Value::as_str)
-                    .is_some_and(|value| value.to_ascii_lowercase().contains("declined"))
+                    .and_then(|value| value.strip_prefix("Your response: "))
+                    .and_then(parse_rsvp)
+            } else {
+                None
+            }
         });
+    let declined = your_rsvp == Some(Rsvp::Declined);
     let cancelled = title.as_deref().is_some_and(|title| {
         let title = title.to_ascii_lowercase();
         title.starts_with("canceled:") || title.starts_with("cancelled:")
@@ -408,7 +660,12 @@ fn parse_retrieval_meeting(result: &Value, now: DateTime<FixedOffset>) -> Option
         start: Some(start),
         end: Some(end),
         organizer,
-        attendees,
+        invitees,
+        your_rsvp,
+        entity_url: object
+            .get("entityUrl")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         cancelled,
         declined,
     })
@@ -525,34 +782,46 @@ fn clean_display_text(text: &str) -> Option<String> {
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
-fn person_name(value: &Value) -> Option<String> {
-    let object = value.as_object()?;
-    if let Some(name) = ["displayName", "name"]
+fn person_contact(value: &Value) -> Option<String> {
+    let (name, email) = person_details(value);
+    format_contact(name.as_deref(), email.as_deref())
+}
+
+fn person_details(value: &Value) -> (Option<String>, Option<String>) {
+    if let Some(text) = value.as_str() {
+        let text = text.trim();
+        return ((!text.is_empty()).then(|| text.to_owned()), None);
+    }
+    let Some(object) = value.as_object() else {
+        return (None, None);
+    };
+    let nested = object
+        .get("emailAddress")
+        .map(person_details)
+        .unwrap_or_default();
+    let name = ["displayName", "name"]
         .iter()
         .filter_map(|key| object.get(*key).and_then(Value::as_str))
         .find_map(clean_display_text)
-    {
-        return Some(name);
-    }
-    if let Some(name) = object.get("emailAddress").and_then(person_name) {
-        return Some(name);
-    }
-    if let Some(address) = object
-        .get("address")
-        .and_then(Value::as_str)
-        .and_then(clean_display_text)
-    {
-        return Some(address);
-    }
-    let addresses = match object.get("emailAddresses")? {
-        Value::String(text) => serde_json::from_str::<Value>(text).ok()?,
-        other => other.clone(),
+        .or(nested.0);
+    let addresses = match object.get("emailAddresses") {
+        Some(Value::String(text)) => serde_json::from_str::<Value>(text).ok(),
+        other => other.cloned(),
     };
-    addresses
-        .as_array()?
+    let email = ["address", "email"]
         .iter()
-        .filter_map(|address| address.get("address").and_then(Value::as_str))
+        .filter_map(|key| object.get(*key).and_then(Value::as_str))
         .find_map(clean_display_text)
+        .or(nested.1)
+        .or_else(|| {
+            addresses
+                .as_ref()?
+                .as_array()?
+                .iter()
+                .filter_map(|address| address.get("address").and_then(Value::as_str))
+                .find_map(clean_display_text)
+        });
+    (name, email)
 }
 
 fn parse_clock(text: &str) -> Option<NaiveTime> {
@@ -598,9 +867,10 @@ fn parse_month_day_year(text: &str) -> Option<NaiveDate> {
     NaiveDate::from_ymd_opt(i32::try_from(year).ok()?, month, day)
 }
 
-/// Converts WorkIQ's local, relative meeting time (for example
-/// `today at 9 AM to today at 9:30 AM` or `last Friday at 10 AM to today at 10 AM`) into
-/// absolute timestamps. `startTime` metadata (`M/D/YYYY`) anchors weekday-relative starts.
+/// Converts WorkIQ's relative meeting time (for example `today at 9 AM to today at 9:30 AM`
+/// or `last Friday at 10 AM to today at 10 AM`) into absolute timestamps in `now`'s offset,
+/// which must be the offset WorkIQ wrote the times in. `startTime` metadata (`M/D/YYYY`)
+/// anchors weekday-relative starts.
 fn parse_time_range(
     text: &str,
     start_date_hint: Option<&str>,
@@ -735,36 +1005,66 @@ impl McpProcess {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, WorkiqError> {
-        let id = self.next_id;
-        self.next_id += 1;
-        self.send(&json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params
-        }))?;
-        let deadline = Instant::now() + timeout;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return Err(WorkiqError::TimedOut);
-            }
-            let response = match self.responses.recv_timeout(remaining) {
-                Ok(response) => response?,
-                Err(RecvTimeoutError::Timeout) => return Err(WorkiqError::TimedOut),
-                Err(RecvTimeoutError::Disconnected) => return Err(WorkiqError::ProcessExited),
-            };
-            if response.get("id").and_then(Value::as_u64) == Some(id) {
-                if let Some(error) = response.get("error") {
-                    return Err(if authentication_error(error) {
-                        WorkiqError::AuthenticationRequired
-                    } else {
-                        WorkiqError::InvalidResponse
-                    });
-                }
-                return Ok(response);
+        self.request_many(method, vec![params], timeout)
+            .pop()
+            .unwrap_or(Err(WorkiqError::InvalidResponse))
+    }
+
+    /// Sends every request before waiting so WorkIQ can work on them concurrently. Results
+    /// keep the order of `params`; all requests share one deadline.
+    fn request_many(
+        &mut self,
+        method: &str,
+        params: Vec<Value>,
+        timeout: Duration,
+    ) -> Vec<Result<Value, WorkiqError>> {
+        let mut results = vec![None; params.len()];
+        let mut pending = Vec::new();
+        for (index, params) in params.into_iter().enumerate() {
+            let id = self.next_id;
+            self.next_id += 1;
+            match self.send(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method,
+                "params": params
+            })) {
+                Ok(()) => pending.push((id, index)),
+                Err(error) => results[index] = Some(Err(error)),
             }
         }
+        let deadline = Instant::now() + timeout;
+        while !pending.is_empty() {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let failure = if remaining.is_zero() {
+                Some(WorkiqError::TimedOut)
+            } else {
+                match self.responses.recv_timeout(remaining) {
+                    Ok(Ok(response)) => {
+                        let id = response.get("id").and_then(Value::as_u64);
+                        if let Some(position) =
+                            pending.iter().position(|(sent, _)| Some(*sent) == id)
+                        {
+                            let (_, index) = pending.swap_remove(position);
+                            results[index] = Some(response_result(response));
+                        }
+                        None
+                    }
+                    Ok(Err(error)) => Some(error),
+                    Err(RecvTimeoutError::Timeout) => Some(WorkiqError::TimedOut),
+                    Err(RecvTimeoutError::Disconnected) => Some(WorkiqError::ProcessExited),
+                }
+            };
+            if let Some(error) = failure {
+                for (_, index) in pending.drain(..) {
+                    results[index] = Some(Err(error.clone()));
+                }
+            }
+        }
+        results
+            .into_iter()
+            .map(|result| result.unwrap_or(Err(WorkiqError::InvalidResponse)))
+            .collect()
     }
 
     fn notify(&mut self, method: &str) -> Result<(), WorkiqError> {
@@ -836,23 +1136,73 @@ impl WorkiqClient {
         let tool =
             discover_meeting_search_tool(&tools)?.ok_or(WorkiqError::UnsupportedCapability)?;
         log_phase("tools_list", started);
-        let arguments = meeting_search_arguments(&tool);
-        let result = process.request_with_timeout(
-            "tools/call",
-            json!({"name": tool.name, "arguments": arguments}),
-            self.lookup_timeout,
-        )?;
+        let calls = MEETING_QUERIES
+            .iter()
+            .map(|query| {
+                json!({"name": tool.name, "arguments": meeting_search_arguments(&tool, query)})
+            })
+            .collect();
+        let responses = process.request_many("tools/call", calls, self.lookup_timeout);
         log_phase("meeting_search", started);
+        let mut meetings = Vec::new();
+        let mut seen = HashSet::new();
+        let mut failure: Option<WorkiqError> = None;
+        let mut succeeded = 0_usize;
+        for (query, response) in MEETING_QUERIES.iter().zip(responses) {
+            let parsed = response.and_then(|response| {
+                let result = response.get("result").ok_or(WorkiqError::InvalidResponse)?;
+                parse_meeting_results(result, now)
+            });
+            match parsed {
+                Ok(found) => {
+                    succeeded += 1;
+                    tracing::debug!(
+                        query,
+                        meetings = found.len(),
+                        "WorkIQ meeting query completed"
+                    );
+                    meetings.extend(
+                        found
+                            .into_iter()
+                            .filter(|meeting| seen.insert(meeting.id.clone())),
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        query,
+                        failure_class = ?error.failure_class(),
+                        "WorkIQ meeting query failed"
+                    );
+                    if !matches!(failure, Some(WorkiqError::AuthenticationRequired)) {
+                        failure = Some(error);
+                    }
+                }
+            }
+        }
+        if succeeded == 0 {
+            return Err(failure.unwrap_or(WorkiqError::InvalidResponse));
+        }
+        if supports_event_fetch(&tools) {
+            enrich_meeting_details(&mut process, &mut meetings, self.timeout);
+        }
         // WorkIQ may take the full shutdown grace period to exit; don't hold results back.
         thread::spawn(move || drop(process));
-        let result = result.get("result").ok_or(WorkiqError::InvalidResponse)?;
-        let meetings = parse_meeting_results(result, now)?;
+        meetings.sort_by_key(|meeting| meeting.start);
         tracing::info!(
             meetings = meetings.len(),
+            queries_succeeded = succeeded,
             elapsed_ms = elapsed_ms(started),
             "WorkIQ meeting lookup completed"
         );
         Ok(meetings)
+    }
+}
+
+fn response_result(response: Value) -> Result<Value, WorkiqError> {
+    match response.get("error") {
+        Some(error) if authentication_error(error) => Err(WorkiqError::AuthenticationRequired),
+        Some(_) => Err(WorkiqError::InvalidResponse),
+        None => Ok(response),
     }
 }
 

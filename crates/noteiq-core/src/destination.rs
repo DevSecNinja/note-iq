@@ -2,6 +2,7 @@ use crate::{
     diagnostics::FailureClass,
     markdown::{MarkdownError, render_markdown},
     model::Capture,
+    note_filename::{NoteFilename, is_reserved_windows_name},
 };
 use chrono::{DateTime, FixedOffset};
 use std::{
@@ -46,11 +47,21 @@ impl DestinationError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Destination {
     pub root: PathBuf,
+    /// Template for notes saved for the first time; saved notes keep the one they started with.
+    pub note_filename: NoteFilename,
 }
 
 impl Destination {
     pub fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            note_filename: NoteFilename::default(),
+        }
+    }
+
+    pub fn with_note_filename(mut self, note_filename: NoteFilename) -> Self {
+        self.note_filename = note_filename;
+        self
     }
 
     pub fn capture_folder(&self, now: DateTime<FixedOffset>) -> PathBuf {
@@ -67,23 +78,42 @@ pub fn capture_path(
     now: DateTime<FixedOffset>,
     collision_number: u32,
 ) -> PathBuf {
-    let slug = slug_from_body(&capture.body);
-    let suffix = if collision_number > 1 {
-        format!("-{collision_number}")
-    } else {
-        String::new()
-    };
-    destination.capture_folder(now).join(format!(
-        "{}_{}{}{}.md",
-        now.format("%Y-%m-%d_%H%M"),
-        slug,
-        suffix,
-        ""
+    destination.capture_folder(now).join(capture_filename(
+        capture,
+        filename_template(capture, destination),
+        now,
+        collision_number,
     ))
 }
 
-fn slug_from_body(body: &str) -> String {
-    let title = body
+fn filename_template<'a>(capture: &'a Capture, destination: &'a Destination) -> &'a NoteFilename {
+    capture
+        .filename_template
+        .as_ref()
+        .unwrap_or(&destination.note_filename)
+}
+
+fn meeting_slug(capture: &Capture) -> Option<String> {
+    capture
+        .meeting
+        .as_ref()
+        .and_then(|meeting| meeting.title.as_deref())
+        .filter(|title| title.chars().any(char::is_alphanumeric))
+        .map(slug_from_text)
+}
+
+fn capture_filename(
+    capture: &Capture,
+    template: &NoteFilename,
+    at: DateTime<FixedOffset>,
+    collision_number: u32,
+) -> String {
+    let slug = meeting_slug(capture).unwrap_or_else(|| slug_from_text(&capture.body));
+    template.render(at, &slug, collision_number)
+}
+
+fn slug_from_text(text: &str) -> String {
+    let title = text
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
@@ -110,59 +140,66 @@ fn slug_from_body(body: &str) -> String {
 
     let slug = slug.trim_matches('-');
     let slug = if slug.is_empty() { "note" } else { slug };
-    let reserved = matches!(
-        slug.to_ascii_uppercase().as_str(),
-        "CON"
-            | "PRN"
-            | "AUX"
-            | "NUL"
-            | "COM1"
-            | "COM2"
-            | "COM3"
-            | "COM4"
-            | "COM5"
-            | "COM6"
-            | "COM7"
-            | "COM8"
-            | "COM9"
-            | "LPT1"
-            | "LPT2"
-            | "LPT3"
-            | "LPT4"
-            | "LPT5"
-            | "LPT6"
-            | "LPT7"
-            | "LPT8"
-            | "LPT9"
-    );
-    if reserved {
+    if is_reserved_windows_name(slug) {
         format!("note-{slug}")
     } else {
         slug.to_owned()
     }
 }
 
+/// Confirms a file is this note by finding its exact `id` property in the front matter.
+/// Reads raw bytes so a multibyte character cut at the read limit cannot fail the check.
 fn file_belongs_to(path: &Path, note_id: Uuid) -> Result<bool, std::io::Error> {
-    let mut file = File::open(path)?;
-    let mut prefix = String::new();
-    Read::by_ref(&mut file)
-        .take(1024)
-        .read_to_string(&mut prefix)?;
-    Ok(prefix.lines().any(|line| {
-        line.strip_prefix("id: ")
-            .is_some_and(|value| value == format!("\"{note_id}\""))
-    }))
+    const MAX_FRONT_MATTER_BYTES: u64 = 1 << 20;
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(MAX_FRONT_MATTER_BYTES)
+        .read_to_end(&mut bytes)?;
+    let text = String::from_utf8_lossy(&bytes);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let mut lines = text.lines();
+    if lines.next().map(str::trim_end) != Some("---") {
+        return Ok(false);
+    }
+    let expected = format!("id: \"{note_id}\"");
+    for line in lines {
+        let line = line.trim_end();
+        if line == "---" {
+            break;
+        }
+        if line == expected {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn next_unused_path(
     capture: &Capture,
+    template: &NoteFilename,
     destination: &Destination,
     now: DateTime<FixedOffset>,
 ) -> Result<PathBuf, DestinationError> {
-    let folder = destination.capture_folder(now);
+    let folder = match capture.path.as_ref() {
+        Some(path) => path
+            .parent()
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "note has no folder")
+            })?
+            .to_path_buf(),
+        None => destination.capture_folder(now),
+    };
     fs::create_dir_all(&folder)?;
     for number in 1..=MAX_COLLISION_ATTEMPTS {
-        let candidate = capture_path(capture, destination, now, number);
+        let candidate = folder.join(capture_filename(
+            capture,
+            template,
+            capture.first_saved_at.unwrap_or(now),
+            number,
+        ));
+        if capture.path.as_ref() == Some(&candidate) {
+            return Ok(candidate);
+        }
         match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -204,29 +241,53 @@ pub fn save_capture(
         return Err(DestinationError::RootUnavailable(destination.root.clone()));
     }
 
-    let is_new = capture.path.is_none();
-    let path = match &capture.path {
-        Some(path) => path.clone(),
-        None => next_unused_path(capture, destination, now)?,
-    };
-    if !is_new && path.exists() && !file_belongs_to(&path, capture.id)? {
-        return Err(DestinationError::ExternalConflict(path));
+    let previous_path = capture.path.clone();
+    if let Some(path) = previous_path.as_ref()
+        && path.exists()
+        && !file_belongs_to(path, capture.id)?
+    {
+        return Err(DestinationError::ExternalConflict(path.clone()));
     }
+    let template = filename_template(capture, destination).clone();
+    let current_meeting_slug = meeting_slug(capture);
+    let path = match previous_path.as_ref() {
+        Some(path)
+            if current_meeting_slug == capture.filename_meeting_slug || !template.uses_title() =>
+        {
+            path.clone()
+        }
+        _ => next_unused_path(capture, &template, destination, now)?,
+    };
+    let reserved_new_path = previous_path.as_ref() != Some(&path);
 
     let result = (|| {
         let contents = render_markdown(capture, now)?;
-        replace_atomically(&path, contents.as_bytes())
+        let write_path = previous_path.as_ref().unwrap_or(&path);
+        replace_atomically(write_path, contents.as_bytes())?;
+        if write_path != &path {
+            // Move the complete file over our reserved name; a failed rename leaves the
+            // updated note at its original path so the next save can retry safely.
+            fs::rename(write_path, &path)?;
+        }
+        Ok(())
     })();
 
     if let Err(error) = result {
-        if is_new {
-            let _ = fs::remove_file(&path);
+        if reserved_new_path && let Err(cleanup_error) = fs::remove_file(&path) {
+            tracing::warn!(
+                failure_class = "filename_reservation_cleanup_failed",
+                error_kind = ?cleanup_error.kind(),
+                "Could not remove an unused filename reservation"
+            );
         }
         return Err(error);
     }
 
     capture.path = Some(path.clone());
     capture.updated_at = now;
+    capture.first_saved_at.get_or_insert(now);
+    capture.filename_meeting_slug = current_meeting_slug;
+    capture.filename_template.get_or_insert(template);
     Ok(Some(path))
 }
 

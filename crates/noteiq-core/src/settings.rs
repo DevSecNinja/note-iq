@@ -1,3 +1,4 @@
+use crate::note_filename::{DEFAULT_NOTE_FILENAME, NoteFilename};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -25,6 +26,10 @@ pub struct Settings {
     pub hotkey: String,
     pub hotkey_enabled: bool,
     pub workiq_executable: Option<PathBuf>,
+    /// Overrides the Windows display name used for a note's `from` property.
+    pub author_name: Option<String>,
+    /// Filename template for new notes, such as `{date}_{time}_{title}`.
+    pub note_filename: String,
 }
 
 impl Settings {
@@ -40,7 +45,22 @@ impl Settings {
             hotkey: "Win+Shift+N".to_owned(),
             hotkey_enabled: true,
             workiq_executable: None,
+            author_name: None,
+            note_filename: DEFAULT_NOTE_FILENAME.to_owned(),
         }
+    }
+
+    /// The filename template for new notes. A hand-edited template that no longer validates
+    /// falls back to the default rather than blocking saves.
+    pub fn note_filename_template(&self) -> NoteFilename {
+        NoteFilename::parse(&self.note_filename).unwrap_or_else(|error| {
+            tracing::warn!(
+                failure_class = "invalid_note_filename",
+                error_kind = error.kind(),
+                "Using the default note filename because the saved template is invalid"
+            );
+            NoteFilename::default()
+        })
     }
 
     pub fn load(path: &Path, user_profile: &Path) -> Result<Self, SettingsError> {

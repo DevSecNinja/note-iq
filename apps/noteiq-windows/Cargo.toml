@@ -38,20 +38,24 @@ interprocess = { version = "2.4", optional = true }
 opener = { version = "0.8", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 rfd = { version = "0.16", optional = true }
-slint = { version = "1.18", optional = true, features = ["backend-winit", "raw-window-handle-06"] }
+slint = { version = "1.18", optional = true, features = ["backend-winit", "raw-window-handle-06", "unstable-winit-030"] }
 tray-icon = { version = "0.21", optional = true }
 windows-sys = { version = "0.61", optional = true, features = [
     "Win32_Foundation",
+    "Win32_Security_Authentication_Identity",
     "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = { version = "0.55", optional = true }
 
 [build-dependencies]
+resvg = { version = "0.48", default-features = false }
 slint-build = "1.18"
+winresource = "0.1"
 
 # Keep in step with `slint`; the testing backend must share its i-slint-core version.
 [target.'cfg(windows)'.dev-dependencies]
 i-slint-backend-testing = "1.18"
+tempfile = "3"
 
 [[test]]
 name = "ui_acceptance"

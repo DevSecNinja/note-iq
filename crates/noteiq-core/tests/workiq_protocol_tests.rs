@@ -2,8 +2,8 @@ use chrono::{DateTime, FixedOffset};
 use noteiq_core::{
     meeting::{MeetingSelection, select_current_meeting},
     workiq::{
-        MeetingSearchTool, WorkiqError, discover_meeting_search_tool, meeting_search_arguments,
-        parse_meeting_results,
+        MEETING_QUERIES, MeetingSearchTool, WorkiqError, discover_meeting_search_tool,
+        meeting_search_arguments, parse_meeting_results,
     },
 };
 use serde_json::{Value, json};
@@ -37,6 +37,18 @@ fn retrieval(results: Vec<Value>) -> Value {
 fn timed_result(time: &str, start_hint: &str) -> Value {
     json!({
         "markdown": format!("- **Timed meeting**\n  - **time:** {time}\n  - **numberOfInvitees:** 0"),
+        "id": "h1",
+        "resourceId": "AAMkTimedEvent=",
+        "entityType": "Meetings",
+        "resourceMetadata": {"meeting": {"title": "<title>Timed meeting</title>", "startTime": start_hint}}
+    })
+}
+
+fn timed_result_with_timing(time: &str, start_hint: &str, until: &str) -> Value {
+    json!({
+        "markdown": format!(
+            "- **Timed meeting**\n  - **time:** {time}\n  - **timeUntilMeeting:** {until}\n  - **numberOfInvitees:** 0"
+        ),
         "id": "h1",
         "resourceId": "AAMkTimedEvent=",
         "entityType": "Meetings",
@@ -113,7 +125,7 @@ fn rejects_malformed_tool_lists() {
 }
 
 #[test]
-fn parses_meetings_without_losing_attendees_or_status_flags() {
+fn parses_meetings_without_losing_invitees_or_status_flags() {
     let response = json!({
         "result": {
             "meetings": [{
@@ -134,7 +146,11 @@ fn parses_meetings_without_losing_attendees_or_status_flags() {
     assert_eq!(meetings.len(), 1);
     assert_eq!(meetings[0].id, "event-42");
     assert_eq!(meetings[0].title.as_deref(), Some("Design review"));
-    assert_eq!(meetings[0].attendees, vec!["Attendee"]);
+    assert_eq!(meetings[0].invitees[0].display_contact(), "Attendee");
+    assert_eq!(
+        meetings[0].invitees[0].role,
+        noteiq_core::model::InviteeRole::Unknown
+    );
     assert_eq!(
         meetings[0].organizer.as_deref(),
         Some("organizer@example.test")
@@ -172,18 +188,28 @@ fn rejects_tool_errors_and_incomplete_meeting_records() {
 }
 
 #[test]
-fn asks_for_todays_meetings_and_scopes_the_search_to_meetings() {
+fn asks_for_current_upcoming_and_todays_meetings_scoped_to_meetings() {
     let tool = MeetingSearchTool {
         name: "retrieve".to_owned(),
         query_property: "query".to_owned(),
         meetings_capability: true,
     };
 
-    let arguments = meeting_search_arguments(&tool);
+    assert_eq!(
+        MEETING_QUERIES,
+        [
+            "My calendar meetings happening now",
+            "My calendar meetings starting in the next hour",
+            "My calendar meetings today",
+        ]
+    );
+    for query in MEETING_QUERIES {
+        let arguments = meeting_search_arguments(&tool, query);
 
-    assert_eq!(arguments["query"], "My calendar meetings today");
-    assert_eq!(arguments["capabilities"], json!([{"name": "Meetings"}]));
-    assert_eq!(arguments["strategy"], "grounding");
+        assert_eq!(arguments["query"], query);
+        assert_eq!(arguments["capabilities"], json!([{"name": "Meetings"}]));
+        assert_eq!(arguments["strategy"], "grounding");
+    }
 }
 
 #[test]
@@ -208,14 +234,33 @@ fn parses_the_real_workiq_retrieval_format() {
     assert_eq!(standup.title.as_deref(), Some("Morning standup"));
     assert_eq!(standup.start, Some(at("2026-11-03T09:00:00+01:00")));
     assert_eq!(standup.end, Some(at("2026-11-03T09:15:00+01:00")));
-    assert!(standup.attendees.is_empty());
+    assert!(standup.invitees.is_empty());
 
     let review = &meetings[1];
     assert_eq!(review.title.as_deref(), Some("Project review & planning"));
     assert_eq!(review.start, Some(at("2026-11-03T14:00:00+01:00")));
     assert_eq!(review.end, Some(at("2026-11-03T14:30:00+01:00")));
-    assert_eq!(review.organizer.as_deref(), Some("Organizer Name"));
-    assert_eq!(review.attendees, ["Attendee One", "Attendee Two"]);
+    assert_eq!(
+        review.organizer.as_deref(),
+        Some("Organizer Name <organizer@example.test>")
+    );
+    assert_eq!(
+        review.invitees[0].display_contact(),
+        "Attendee One <one@example.test>"
+    );
+    assert_eq!(
+        review.invitees[1].display_contact(),
+        "Attendee Two <two@example.test>"
+    );
+    assert_eq!(
+        review.invitees[0].role,
+        noteiq_core::model::InviteeRole::Required
+    );
+    assert_eq!(
+        review.invitees[1].role,
+        noteiq_core::model::InviteeRole::Optional
+    );
+    assert_eq!(review.your_rsvp, Some(noteiq_core::model::Rsvp::Accepted));
     assert!(!review.cancelled);
     assert!(!review.declined);
 
@@ -263,7 +308,10 @@ fn reads_titles_from_the_markdown_heading_when_metadata_is_missing() {
         meeting.organizer.as_deref(),
         Some("owner_name@example.test")
     );
-    assert_eq!(meeting.attendees, ["only_address@example.test"]);
+    assert_eq!(
+        meeting.invitees[0].display_contact(),
+        "only_address@example.test"
+    );
 }
 
 #[test]
@@ -292,51 +340,152 @@ fn reports_an_invalid_response_when_no_retrieval_result_is_usable() {
 }
 
 #[test]
-fn converts_relative_meeting_times_to_local_timestamps() {
+fn reads_relative_meeting_times_as_utc_and_returns_local_timestamps() {
+    // Without `timeUntilMeeting` there is nothing to calibrate against, so WorkIQ's observed
+    // UTC clock is assumed. `now()` is 13:15 UTC on 3 November.
     let cases = [
         (
             "today at 12 AM to today at 12:30 PM",
             "11/3/2026",
-            "2026-11-03T00:00:00+01:00",
-            "2026-11-03T12:30:00+01:00",
+            "2026-11-03T00:00:00Z",
+            "2026-11-03T12:30:00Z",
         ),
         (
             "today at 11:30 PM to tomorrow at 12:15 AM",
             "11/3/2026",
-            "2026-11-03T23:30:00+01:00",
-            "2026-11-04T00:15:00+01:00",
+            "2026-11-03T23:30:00Z",
+            "2026-11-04T00:15:00Z",
         ),
         (
             "yesterday at 13:00 to yesterday at 14:00",
             "11/2/2026",
-            "2026-11-02T13:00:00+01:00",
-            "2026-11-02T14:00:00+01:00",
+            "2026-11-02T13:00:00Z",
+            "2026-11-02T14:00:00Z",
         ),
         (
             "Monday at 9 AM to Thursday at 5 PM",
             "11/2/2026",
-            "2026-11-02T09:00:00+01:00",
-            "2026-11-05T17:00:00+01:00",
+            "2026-11-02T09:00:00Z",
+            "2026-11-05T17:00:00Z",
         ),
         (
             "last Friday at 10 AM to today at 10 AM",
             "10/30/2026",
-            "2026-10-30T10:00:00+01:00",
-            "2026-11-03T10:00:00+01:00",
+            "2026-10-30T10:00:00Z",
+            "2026-11-03T10:00:00Z",
         ),
         (
             "Monday at 9 AM to Monday at 10 AM",
             "11/3/2026",
-            "2026-11-02T09:00:00+01:00",
-            "2026-11-02T10:00:00+01:00",
+            "2026-11-02T09:00:00Z",
+            "2026-11-02T10:00:00Z",
         ),
     ];
 
     for (time, hint, start, end) in cases {
+        let (parsed_start, parsed_end) = parse_single_range(time, hint).unwrap();
+        assert_eq!((parsed_start, parsed_end), (at(start), at(end)), "{time}");
+        assert_eq!(parsed_start.offset(), now().offset(), "{time}");
+        assert_eq!(parsed_end.offset(), now().offset(), "{time}");
+    }
+}
+
+#[test]
+fn an_in_progress_meeting_written_in_utc_is_placed_at_its_local_time() {
+    let response = retrieval(vec![timed_result_with_timing(
+        "today at 1 PM to today at 1:30 PM",
+        "11/3/2026",
+        "event is in progress",
+    )]);
+
+    let meetings = parse_meeting_results(&response, now()).unwrap();
+
+    assert_eq!(meetings[0].start, Some(at("2026-11-03T14:00:00+01:00")));
+    assert_eq!(meetings[0].end, Some(at("2026-11-03T14:30:00+01:00")));
+    assert!(matches!(
+        select_current_meeting(&meetings, now(), true),
+        MeetingSelection::Connected(_)
+    ));
+}
+
+#[test]
+fn utc_dates_are_used_for_today_and_tomorrow_around_local_midnight() {
+    // 00:30 local on 4 November is still 23:30 UTC on 3 November.
+    let just_after_midnight = at("2026-11-04T00:30:00+01:00");
+    let response = retrieval(vec![timed_result_with_timing(
+        "today at 11 PM to tomorrow at 12 AM",
+        "11/3/2026",
+        "event is in progress",
+    )]);
+
+    let meetings = parse_meeting_results(&response, just_after_midnight).unwrap();
+
+    assert_eq!(meetings[0].start, Some(at("2026-11-04T00:00:00+01:00")));
+    assert_eq!(meetings[0].end, Some(at("2026-11-04T01:00:00+01:00")));
+}
+
+#[test]
+fn times_written_in_local_time_are_detected_from_time_until_meeting() {
+    let cases = [
+        (
+            "today at 2 PM to today at 2:30 PM",
+            "event is in progress",
+            "2026-11-03T14:00:00+01:00",
+        ),
+        (
+            "today at 2:18 PM to today at 3 PM",
+            "3 minutes",
+            "2026-11-03T14:18:00+01:00",
+        ),
+        (
+            "tomorrow at 6:08 PM to tomorrow at 7 PM",
+            "1 day, 3 hours and 53 minutes",
+            "2026-11-04T18:08:00+01:00",
+        ),
+        (
+            "today at 1 PM to today at 2 PM",
+            "event is in the past",
+            "2026-11-03T13:00:00+01:00",
+        ),
+    ];
+
+    for (time, until, start) in cases {
+        let response = retrieval(vec![timed_result_with_timing(time, "11/3/2026", until)]);
+
+        let meetings = parse_meeting_results(&response, now()).unwrap();
+
+        assert_eq!(meetings[0].start, Some(at(start)), "{time} / {until}");
+    }
+}
+
+#[test]
+fn upcoming_meetings_written_in_utc_keep_the_utc_reading() {
+    let response = retrieval(vec![timed_result_with_timing(
+        "today at 1:30 PM to today at 2 PM",
+        "11/3/2026",
+        "15 minutes",
+    )]);
+
+    let meetings = parse_meeting_results(&response, now()).unwrap();
+
+    assert_eq!(meetings[0].start, Some(at("2026-11-03T14:30:00+01:00")));
+}
+
+#[test]
+fn unreadable_time_until_meeting_falls_back_to_utc() {
+    for until in ["soon", "about 3 minutes", "3 fortnights", ""] {
+        let response = retrieval(vec![timed_result_with_timing(
+            "today at 2 PM to today at 2:30 PM",
+            "11/3/2026",
+            until,
+        )]);
+
+        let meetings = parse_meeting_results(&response, now()).unwrap();
+
         assert_eq!(
-            parse_single_range(time, hint).unwrap(),
-            (at(start), at(end)),
-            "{time}"
+            meetings[0].start,
+            Some(at("2026-11-03T15:00:00+01:00")),
+            "{until:?}"
         );
     }
 }

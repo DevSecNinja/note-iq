@@ -82,7 +82,7 @@ removed while text and ID remain unchanged.
 - [x] T026 [P] [US2] Implement meeting candidate validation and auto-select only when exactly one match exists in `crates/noteiq-core/src/meeting.rs`
 - [x] T027 [US2] Implement bounded MCP handshake, runtime tool discovery, and process/error classes in `crates/noteiq-core/src/workiq.rs`
 - [x] T028 [US2] Discover Scout's architecture-matched WorkIQ executable in `apps/noteiq-windows/src/workiq_windows.rs`
-- [x] T029 [US2] Add meeting chip, selection list, No meeting action, and settings state in `apps/noteiq-windows/ui/main.slint`
+- [x] T029 [US2] Add meeting chip, selection list, No meeting action, and settings state in `apps/noteiq-windows/ui/main.slint` (superseded by the Meeting list in T075)
 - [x] T030 [US2] Start lookup asynchronously and preserve explicit decisions in `apps/noteiq-windows/src/meeting_ui.rs`
 
 **Checkpoint**: Notes remain usable if meeting discovery is absent or fails.
@@ -167,7 +167,34 @@ correlation IDs while asserting note bodies and meeting values are absent.
 - [x] T056 Verify the Spec Kit artifacts and requirement checklist in `specs/001-noteiq-capture/`
 - [x] T057 [P] Test that a failed autosave backs off, keeps the draft, never throttles explicit saves, and recovers once the destination returns in `crates/noteiq-core/tests/autosave_tests.rs` and `crates/noteiq-core/tests/save_lifecycle_tests.rs`
 - [x] T058 Pause automatic retries with a growing delay after a failed save in `crates/noteiq-core/src/autosave.rs` and `crates/noteiq-core/src/capture.rs`
-
+- [x] T059 Add regressions for the explicit light widget palette, usable editor space, minimum-size meeting picker, and settings bounds/focus/draft preservation in `apps/noteiq-windows/tests/ui_acceptance.rs`
+- [x] T060 Fix mismatched system-dark widget colors and hidden-panel layout gaps in `apps/noteiq-windows/ui/main.slint`, then verify the rebuilt Windows UI with live meeting discovery
+- [x] T061 [P] Test UTC meeting times, `timeUntilMeeting` time-zone calibration, merged multi-query lookups with partial failures, and the ±15-minute chooser in `crates/noteiq-core/tests/workiq_protocol_tests.rs`, `crates/noteiq-core/tests/workiq_process_tests.rs`, and `crates/noteiq-core/tests/meeting_selection_tests.rs` (the chooser was later superseded by the Meeting list in T075)
+- [x] T062 Convert WorkIQ's UTC meeting times to local time and run the now, next-hour, and today queries concurrently in `crates/noteiq-core/src/workiq.rs`
+- [x] T063 Offer meetings starting or ending within 15 minutes, labelled with local times, while auto-connecting only a single in-progress meeting in `crates/noteiq-core/src/meeting.rs` and `apps/noteiq-windows/src/ui.rs`
+- [x] T064 Generate multi-resolution Windows icons from `apps/noteiq-windows/assets/noteiq.svg`, embed resources, and share the branding across window, taskbar, tray, header, and URI.
+- [x] T065 Preserve invitee roles, names/email, RSVP, and explicit reported attendance in `crates/noteiq-core/src/model.rs`, `workiq.rs`, and `markdown.rs`; validate unknown handling and YAML quoting in `tests/invitee_tests.rs`.
+- [x] T066 Add a blank line after closing front matter, version the new metadata schema, and update golden fixtures under `crates/noteiq-core/tests/fixtures/front_matter/`.
+- [x] T067 Add New note, cache the full meeting list across captures, and keep older meetings selectable while connected in `apps/noteiq-windows/src/ui.rs`, with state and UI regressions.
+- [x] T068 Verify optional RSVP fetch in WSL, run native checks, rebuild/relaunch NoteIQ, and verify embedded shell icons and the cached older-meeting picker on Windows.
+- [x] T069 Use meeting names in filenames, safely rename on meeting changes or late discovery, preserve collision handling and the original folder/timestamp, and cover the behavior in core regression tests.
+- [x] T070 Match the vault's capture layout (schema 3): Obsidian properties first, then meeting properties, then NoteIQ bookkeeping; flat quoted invitee lists; and a body with title, From/Captured line, Meeting details, Summary, Follow-ups, and a collapsed Raw capture, in `crates/noteiq-core/src/markdown.rs`, with golden fixtures in `crates/noteiq-core/tests/fixtures/front_matter/` and `crates/noteiq-core/tests/vault_capture_tests.rs`.
+- [x] T071 Record the author as `from`, using the `author_name` setting or the Windows display name, in `apps/noteiq-windows/src/author.rs`, `crates/noteiq-core/src/settings.rs`, and `crates/noteiq-core/src/markdown.rs`.
+- [x] T072 Confirm a saved file still carries the note's `id` before any rewrite, rename, or deletion, and report an external conflict otherwise, in `crates/noteiq-core/src/destination.rs`, covered by `destination_io_tests.rs` and `save_lifecycle_tests.rs`.
+- [x] T073 Apply the nested rubber-duck review: save a late author lookup at once for an open, already-saved note; escape the note title; and show meeting times in the named time zone at each instant across DST changes, with regressions.
+- [x] T074 Run a nested UX designer consultation on the meeting picker, filename setting, and window chrome, and adopt all ten findings.
+- [x] T075 Replace the meeting chip, Connect, and No meeting buttons with one Meeting list (No meeting first, meetings unnumbered), a Refresh button, and a state hint below the list in `apps/noteiq-windows/ui/main.slint` and `apps/noteiq-windows/src/ui.rs`.
+- [x] T076 Re-evaluate automatic selection every 60 seconds from cached results so an empty note snaps to a meeting once it starts; keep explicit choices for the note, reset them on New note, and never attach automatically after a failed lookup, in `crates/noteiq-core/src/meeting.rs` and `apps/noteiq-windows/src/ui.rs`, with unit tests.
+- [x] T077 Add the Note filename setting with `{date}`, `{time}`, and `{title}` placeholders, a live example, inline validation, and a template fixed at first save, in `crates/noteiq-core/src/note_filename.rs`, `crates/noteiq-core/src/destination.rs`, `apps/noteiq-windows/ui/main.slint`, and `apps/noteiq-windows/src/ui.rs`, covered by `crates/noteiq-core/tests/note_filename_tests.rs`.
+- [x] T078 Remove the header × and footer Close buttons; the title-bar close and Alt+F4 use the same save-then-finish path, covered by `apps/noteiq-windows/tests/ui_acceptance.rs`.
+- [x] T079 Update `README.md`, `docs/setup.md`, and these Spec Kit artifacts; run formatting, Clippy, and native and WSL tests; then rebuild and relaunch the release.
+- [x] T080 Add pinned calls to the `DevSecNinja/.github` reusable lint, configuration-sync, Release Please, labeler, label-sync, and assign-issue-to-codeowners workflows in repository automation configuration.
+- [x] T081 Add `.github/workflows/ci.yml` jobs for portable formatting, Clippy, and tests on `ubuntu-24.04`/`ubuntu-24.04-arm`, plus native desktop Clippy/tests on `windows-2025`/`windows-11-arm`; invoke `.github/workflows/build-windows.yml` and verify each executable architecture.
+- [x] T082 Configure `release-please-config.json` for the virtual Cargo workspace, starting at `0.1.0`, with TOML extra-files updates for root `Cargo.toml` and workspace package versions in `Cargo.lock`, and draft/tag-creation settings.
+- [x] T083 Implement `.github/workflows/release.yml` tag and manual-retry packaging that builds both architectures from the same tagged commit through `.github/workflows/build-windows.yml`, zips `noteiq.exe`, `README.md`, and `LICENSE`, generates `SHA256SUMS.txt` and GitHub attestations, and uploads/publishes only the existing Release Please draft.
+- [x] T084 Validate local x64-under-emulation, ARM64, and WSL Clippy/tests/builds; verify PE machine values `8664`/`AA64`; pass `yamlfmt -lint`, `yamllint`, `actionlint`, and `zizmor --offline`; scan source with Gitleaks; exercise offline packaging with both real binaries and verify ZIP contents, architecture IDs, SHA-256 values, and tag/ref/published-release guard rejection cases.
+- [x] T085 Run `yamlfmt -lint` and `yamllint` against the workflow/configuration YAML and resolve findings.
+- [ ] T086 After Release Please App/repository permissions are configured, run hosted CI and validate a tag-bound release retry end to end; no remote run is claimed until authorized.
 ## Dependencies and Execution Order
 
 ### Phase dependencies
@@ -234,5 +261,6 @@ close-only empty-note deletion. Validate in WSL before building Windows UI.
 - A live-meeting acceptance check on the real calendar (UI Automation only, a
   temporary destination, no meeting values printed or kept) verifies automatic
   connect, the saved meeting block, No meeting removing it from the saved file,
-  and Find meeting then Connect restoring it. A missing-destination run verifies
+  and Find meeting then Connect restoring it (both buttons were later replaced
+  by choosing from the Meeting list). A missing-destination run verifies
   that autosave pauses retries (5 s, then 10 s) and recovers once the folder returns.

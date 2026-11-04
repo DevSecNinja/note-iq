@@ -1,6 +1,9 @@
 #[cfg(windows)]
 mod app;
 #[cfg(windows)]
+#[allow(unsafe_code)]
+mod author;
+#[cfg(windows)]
 mod error_ui;
 #[cfg(windows)]
 #[allow(unsafe_code)]

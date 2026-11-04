@@ -1,0 +1,103 @@
+---
+name: CI
+
+# Local: the central repository has no reusable Rust/Slint build or test workflow.
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: Exact commit to validate for a release
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  portable:
+    name: Portable (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+    steps:
+      - name: Harden runner
+        uses: DevSecNinja/.github/actions/harden-runner@24acc67adf1be33089e73b2fdbdb4be8c12d145b # v3.2.0
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Cache Rust
+        if: github.ref_type != 'tag' && inputs.source-ref == ''
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+
+  windows:
+    name: Windows (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+    env:
+      RUST_TARGET: ${{ matrix.target }}
+    steps:
+      - name: Harden runner
+        uses: DevSecNinja/.github/actions/harden-runner@24acc67adf1be33089e73b2fdbdb4be8c12d145b # v3.2.0
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref || github.sha }}
+          persist-credentials: false
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup target add $env:RUST_TARGET
+      - name: Cache Rust
+        if: github.ref_type != 'tag' && inputs.source-ref == ''
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      - name: Clippy
+        run: cargo clippy --workspace --features noteiq-windows/desktop --all-targets --locked --target $env:RUST_TARGET --
+          -D warnings
+      - name: Test native desktop and core
+        run: cargo test --workspace --features noteiq-windows/desktop --locked --target $env:RUST_TARGET
+
+  build:
+    uses: ./.github/workflows/build-windows.yml
+    with:
+      source-ref: ${{ inputs.source-ref || github.sha }}

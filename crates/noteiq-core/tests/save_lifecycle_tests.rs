@@ -1,10 +1,43 @@
 mod common;
 
-use common::{capture, instant};
+use common::{capture, instant, meeting};
 use noteiq_core::capture::CaptureController;
 use noteiq_core::destination::{Destination, DestinationError, save_capture};
 use std::time::{Duration, Instant};
 use tempfile::tempdir;
+
+#[test]
+fn meeting_changes_wait_for_the_typing_pause_and_never_save_an_empty_draft() {
+    let temp = tempdir().unwrap();
+    let destination = Destination::new(temp.path().to_path_buf());
+    let now = Instant::now();
+    let mut controller = CaptureController::new(capture());
+
+    controller.connect_meeting(meeting(), now);
+    controller.disconnect_meeting(now);
+    assert!(
+        !controller.is_dirty(),
+        "an empty draft that was never saved has nothing to write"
+    );
+
+    controller.edit("Decision", now);
+    controller.save(&destination, instant()).unwrap().unwrap();
+    controller.connect_meeting(meeting(), now);
+    assert!(controller.is_dirty());
+    assert!(
+        !controller.autosave_due(now + Duration::from_millis(100)),
+        "moving through the picker doesn't rewrite the file at every step"
+    );
+    assert!(controller.autosave_due(now + Duration::from_secs(1)));
+
+    controller.edit("", now);
+    controller.save(&destination, instant()).unwrap().unwrap();
+    controller.disconnect_meeting(now);
+    assert!(
+        controller.is_dirty(),
+        "a saved note records the change even after its text was erased"
+    );
+}
 
 #[test]
 fn a_failed_save_pauses_autosave_retries_and_keeps_the_draft_until_the_destination_returns() {

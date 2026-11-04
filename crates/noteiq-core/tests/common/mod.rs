@@ -1,16 +1,28 @@
 use chrono::{DateTime, FixedOffset};
-use noteiq_core::model::{Capture, CaptureSource, Meeting};
+use noteiq_core::model::{Capture, CaptureSource, Invitee, InviteeRole, Meeting, Rsvp};
+
+#[allow(dead_code)]
+pub fn invitee(name: &str) -> Invitee {
+    Invitee {
+        name: Some(name.to_owned()),
+        email: None,
+        role: InviteeRole::Required,
+        rsvp: Rsvp::Unknown,
+        has_attended: None,
+    }
+}
 
 pub fn instant() -> DateTime<FixedOffset> {
     DateTime::parse_from_rfc3339("2026-11-03T14:15:00+01:00").expect("fixed test time")
 }
 
+/// A capture taken in Amsterdam, whose offset on the test date is +01:00.
 #[allow(dead_code)]
 pub fn capture() -> Capture {
     Capture::new(
         CaptureSource::Shortcut,
         instant(),
-        "Europe/London".to_owned(),
+        "Europe/Amsterdam".to_owned(),
     )
 }
 
@@ -22,8 +34,25 @@ pub fn meeting() -> Meeting {
         start: Some(DateTime::parse_from_rfc3339("2026-11-03T14:00:00+01:00").unwrap()),
         end: Some(DateTime::parse_from_rfc3339("2026-11-03T14:30:00+01:00").unwrap()),
         organizer: Some("Organizer".to_owned()),
-        attendees: vec!["Attendee".to_owned()],
+        invitees: vec![invitee("Invitee")],
+        your_rsvp: None,
+        entity_url: None,
         cancelled: false,
         declined: false,
     }
+}
+
+/// Returns the newline-terminated text stored in a note's frozen "Raw capture" block.
+#[allow(dead_code)]
+pub fn raw_capture(note: &str) -> &str {
+    const RAW_CAPTURE_OPEN: &str =
+        "<!-- ⛔ Verbatim, as typed in NoteIQ. Never edited after capture. -->\n\n";
+    let start = note
+        .find(RAW_CAPTURE_OPEN)
+        .expect("note has a raw capture block")
+        + RAW_CAPTURE_OPEN.len();
+    let text = note[start..]
+        .strip_suffix("</details>\n")
+        .expect("the raw capture block ends the note");
+    text.strip_suffix('\n').unwrap_or(text)
 }

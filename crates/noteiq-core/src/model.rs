@@ -1,3 +1,4 @@
+use crate::note_filename::NoteFilename;
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -34,6 +35,65 @@ pub enum MeetingDecision {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InviteeRole {
+    Required,
+    Optional,
+    Resource,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Rsvp {
+    Accepted,
+    Tentative,
+    Declined,
+    NotResponded,
+    Organizer,
+    Unknown,
+}
+
+impl Rsvp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Tentative => "tentative",
+            Self::Declined => "declined",
+            Self::NotResponded => "not_responded",
+            Self::Organizer => "organizer",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Invitee {
+    pub name: Option<String>,
+    pub email: Option<String>,
+    pub role: InviteeRole,
+    pub rsvp: Rsvp,
+    pub has_attended: Option<bool>,
+}
+
+impl Invitee {
+    pub fn display_contact(&self) -> String {
+        format_contact(self.name.as_deref(), self.email.as_deref()).unwrap_or_default()
+    }
+}
+
+pub fn format_contact(name: Option<&str>, email: Option<&str>) -> Option<String> {
+    match (name, email) {
+        (Some(name), Some(email)) if !name.eq_ignore_ascii_case(email) => {
+            Some(format!("{name} <{email}>"))
+        }
+        (_, Some(email)) => Some(email.to_owned()),
+        (Some(name), None) => Some(name.to_owned()),
+        (None, None) => None,
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Meeting {
     pub id: String,
     pub title: Option<String>,
@@ -41,7 +101,11 @@ pub struct Meeting {
     pub end: Option<DateTime<FixedOffset>>,
     pub organizer: Option<String>,
     #[serde(default)]
-    pub attendees: Vec<String>,
+    pub invitees: Vec<Invitee>,
+    #[serde(default)]
+    pub your_rsvp: Option<Rsvp>,
+    #[serde(skip)]
+    pub entity_url: Option<String>,
     #[serde(default)]
     pub cancelled: bool,
     #[serde(default)]
@@ -55,11 +119,17 @@ pub struct Capture {
     pub updated_at: DateTime<FixedOffset>,
     pub timezone: String,
     pub source: CaptureSource,
+    /// Display name of the person taking the note, written as the vault's `from` wikilink.
+    pub author: Option<String>,
     pub tags: Vec<String>,
     pub body: String,
     pub meeting: Option<Meeting>,
     pub meeting_decision: MeetingDecision,
     pub path: Option<PathBuf>,
+    pub(crate) first_saved_at: Option<DateTime<FixedOffset>>,
+    pub(crate) filename_meeting_slug: Option<String>,
+    /// Fixed at the first save, so changing the setting never renames notes already saved.
+    pub(crate) filename_template: Option<NoteFilename>,
 }
 
 impl Capture {
@@ -70,11 +140,15 @@ impl Capture {
             updated_at: created_at,
             timezone,
             source,
+            author: None,
             tags: Vec::new(),
             body: String::new(),
             meeting: None,
             meeting_decision: MeetingDecision::Pending,
             path: None,
+            first_saved_at: None,
+            filename_meeting_slug: None,
+            filename_template: None,
         }
     }
 

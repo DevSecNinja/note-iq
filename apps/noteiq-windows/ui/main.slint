@@ -1,7 +1,10 @@
-import { Button, CheckBox, ComboBox, LineEdit, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, TextEdit } from "std-widgets.slint";
+export { Palette }
 
 export component MainWindow inherits Window {
     title: "NoteIQ";
+    out property <image> app-icon: @image-url("../assets/noteiq.svg");
+    icon: root.app-icon;
     min-width: 640px;
     min-height: 540px;
     preferred-width: 760px;
@@ -9,36 +12,58 @@ export component MainWindow inherits Window {
     background: #f5f6f8;
     forward-focus: note-editor;
 
+    init => {
+        // The capture surfaces are light even when Windows uses a dark theme.
+        Palette.color-scheme = ColorScheme.light;
+    }
+
     in-out property <string> note-text;
     in-out property <string> status-text: "Ready";
-    in-out property <string> meeting-label: "Checking for a meeting…";
+    in-out property <string> meeting-hint: "Checking your calendar…";
     in-out property <string> destination-label;
     in-out property <string> open-label: "Open note";
-    in-out property <[string]> meeting-options;
-    in-out property <int> meeting-index: -1;
+    // Option 0 is always "No meeting"; the others are meetings, most relevant first.
+    in-out property <[string]> meeting-options: ["No meeting"];
+    in-out property <int> meeting-index: 0;
+    in-out property <bool> meeting-picker-enabled: false;
+    in-out property <bool> meeting-refresh-enabled: true;
     in-out property <bool> saved: false;
     in-out property <bool> has-note: false;
     in-out property <bool> settings-visible: false;
-    in-out property <bool> meeting-picker-visible: false;
     in-out property <bool> auto-connect: true;
-    in-out property <bool> has-meeting: false;
     in-out property <string> hotkey-text: "Win+Shift+N";
+    in-out property <string> hotkey-error;
     in-out property <bool> hotkey-enabled: true;
+    in-out property <string> note-filename-text: "{date}_{time}_{title}";
+    in-out property <string> note-filename-preview;
+    in-out property <string> note-filename-error;
     in-out property <bool> destination-error: false;
 
     callback body-changed(string);
     callback save-requested();
-    callback close-requested();
     callback open-requested();
     callback meeting-refresh-requested();
-    callback connect-requested(int);
-    callback disconnect-requested();
+    // Only user choices in the picker call this; setting meeting-index from code does not.
+    callback meeting-chosen(int);
     callback settings-requested(bool);
     callback destination-requested();
     callback auto-connect-changed(bool);
     callback hotkey-changed(string);
     callback hotkey-enabled-changed(bool);
+    callback note-filename-edited(string);
+    callback note-filename-changed(string);
     callback new-note-requested();
+
+    // Applies pending settings; Settings stays open while a value is rejected.
+    function close-settings() {
+        root.hotkey-changed(root.hotkey-text);
+        root.note-filename-changed(root.note-filename-text);
+        if root.hotkey-error == "" && root.note-filename-error == "" {
+            root.settings-visible = false;
+            root.settings-requested(false);
+            note-editor.focus();
+        }
+    }
 
     FocusScope {
         forward-focus: note-editor;
@@ -66,20 +91,11 @@ export component MainWindow inherits Window {
                     height: 42px;
                     spacing: 10px;
 
-                    Rectangle {
+                    Image {
                         width: 36px;
                         height: 36px;
-                        border-radius: 10px;
-                        background: #4f46e5;
-                        Text {
-                            text: "N";
-                            color: white;
-                            font-family: "Segoe UI Variable";
-                            font-size: 20px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
+                        source: root.app-icon;
+                        image-fit: contain;
                     }
 
                     VerticalLayout {
@@ -102,222 +118,319 @@ export component MainWindow inherits Window {
                     Rectangle { horizontal-stretch: 1; }
 
                     Button {
+                        text: "New note";
+                        clicked => { root.new-note-requested(); }
+                    }
+                    Button {
                         text: "Settings";
                         clicked => {
-                            root.settings-visible = !root.settings-visible;
-                            root.settings-requested(root.settings-visible);
-                        }
-                    }
-                    Button {
-                        text: "×";
-                        width: 36px;
-                        accessible-label: "Close window";
-                        clicked => { root.close-requested(); }
-                    }
-                }
-
-                Rectangle {
-                    visible: !root.settings-visible;
-                    background: #ffffff;
-                    border-radius: 14px;
-                    border-width: 1px;
-                    border-color: #e6e8ed;
-
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 12px;
-
-                        HorizontalLayout {
-                            spacing: 10px;
-                            Text {
-                                text: root.meeting-label;
-                                color: #31343b;
-                                font-size: 14px;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
+                            if root.settings-visible {
+                                root.close-settings();
+                            } else {
+                                root.settings-visible = true;
+                                root.settings-requested(true);
                             }
-                            Button {
-                                text: "Find meeting";
-                                clicked => { root.meeting-refresh-requested(); }
-                            }
-                            Button {
-                                text: "Connect";
-                                visible: root.meeting-picker-visible;
-                                clicked => { root.connect-requested(root.meeting-index); }
-                            }
-                            Button {
-                                text: "No meeting";
-                                visible: root.has-meeting || root.meeting-picker-visible;
-                                clicked => { root.disconnect-requested(); }
-                            }
-                        }
-
-                        ComboBox {
-                            visible: root.meeting-picker-visible;
-                            model: root.meeting-options;
-                            current-index <=> root.meeting-index;
                         }
                     }
                 }
 
                 Rectangle {
-                    visible: root.settings-visible;
-                    background: #ffffff;
-                    border-radius: 14px;
-                    border-width: 1px;
-                    border-color: #e6e8ed;
+                    min-width: 0px;
+                    min-height: 0px;
+                    vertical-stretch: 1;
 
-                    VerticalLayout {
-                        padding: 18px;
-                        spacing: 14px;
-
-                    Text {
-                        text: "Capture settings";
-                        color: #20232a;
-                        font-size: 17px;
-                        font-weight: 650;
-                    }
-                    Text {
-                        text: "Notes are saved to one folder only.";
-                        color: #5f6470;
-                        font-size: 13px;
-                    }
                     Rectangle {
-                        background: #f7f7f9;
-                        border-radius: 9px;
+                        visible: !root.settings-visible;
+                        VerticalLayout {
+                            spacing: 16px;
+
+                            Rectangle {
+                                background: #ffffff;
+                                border-radius: 14px;
+                                border-width: 1px;
+                                border-color: #e6e8ed;
+                                vertical-stretch: 0;
+
+                                VerticalLayout {
+                                    padding-top: 12px;
+                                    padding-bottom: 12px;
+                                    padding-left: 16px;
+                                    padding-right: 16px;
+                                    spacing: 6px;
+
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        Text {
+                                            text: "Meeting";
+                                            // The picker carries this name for screen readers.
+                                            accessible-role: none;
+                                            color: #383b43;
+                                            font-size: 13px;
+                                            font-weight: 600;
+                                            vertical-alignment: center;
+                                        }
+                                        ComboBox {
+                                            accessible-label: "Meeting";
+                                            model: root.meeting-options;
+                                            current-index <=> root.meeting-index;
+                                            enabled: root.meeting-picker-enabled;
+                                            horizontal-stretch: 1;
+                                            selected(value) => { root.meeting-chosen(self.current-index); }
+                                        }
+                                        Button {
+                                            text: "Refresh";
+                                            accessible-label: "Refresh meetings";
+                                            enabled: root.meeting-refresh-enabled;
+                                            clicked => { root.meeting-refresh-requested(); }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: root.meeting-hint;
+                                        color: #5f6470;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                background: #ffffff;
+                                border-radius: 14px;
+                                border-width: 1px;
+                                border-color: #e6e8ed;
+                                min-height: 100px;
+                                vertical-stretch: 1;
+
+                                note-editor := TextEdit {
+                                    x: 16px;
+                                    y: 14px;
+                                    width: parent.width - 32px;
+                                    height: parent.height - 28px;
+                                    text <=> root.note-text;
+                                    accessible-label: "Note contents";
+                                    font-family: "Segoe UI Variable";
+                                    font-size: 15px;
+                                    edited => { root.body-changed(self.text); }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                min-height: 38px;
+                                spacing: 8px;
+
+                                Text {
+                                    text: root.has-note ? (root.saved ? "Saved" : "Unsaved") : "Draft";
+                                    color: root.saved ? #166534 : #b45309;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                                // Wraps rather than truncating: it may be the only explanation
+                                // of a failed save.
+                                Text {
+                                    text: root.status-text;
+                                    color: #5f6470;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                    min-width: 0px;
+                                    wrap: word-wrap;
+                                }
+                                if root.has-note: Button {
+                                    text: root.open-label;
+                                    clicked => { root.open-requested(); }
+                                }
+                                if root.destination-error: Button {
+                                    text: "Choose folder";
+                                    clicked => { root.destination-requested(); }
+                                }
+                                Button {
+                                    text: "Save";
+                                    clicked => { root.save-requested(); }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.settings-visible: Rectangle {
+                        background: #ffffff;
+                        border-radius: 14px;
                         border-width: 1px;
-                        border-color: #ebecef;
-                        HorizontalLayout {
-                            padding: 10px;
-                            spacing: 8px;
-                            Text {
-                                text: root.destination-label;
-                                color: #383b43;
-                                font-size: 13px;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                overflow: elide;
+                        border-color: #e6e8ed;
+
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 14px;
+
+                            ScrollView {
+                                viewport-width: self.width;
+
+                                VerticalLayout {
+                                    spacing: 14px;
+                                    alignment: start;
+
+                                    Text {
+                                        text: "Capture settings";
+                                        color: #20232a;
+                                        font-size: 17px;
+                                        font-weight: 650;
+                                    }
+                                    Text {
+                                        text: "Notes are saved to one folder only.";
+                                        color: #5f6470;
+                                        font-size: 13px;
+                                    }
+                                    Rectangle {
+                                        background: #f7f7f9;
+                                        border-radius: 9px;
+                                        border-width: 1px;
+                                        border-color: #ebecef;
+                                        HorizontalLayout {
+                                            padding: 10px;
+                                            spacing: 8px;
+                                            Text {
+                                                text: root.destination-label;
+                                                color: #383b43;
+                                                font-size: 13px;
+                                                vertical-alignment: center;
+                                                horizontal-stretch: 1;
+                                                min-width: 0px;
+                                                overflow: elide;
+                                            }
+                                            Button {
+                                                text: "Choose folder";
+                                                clicked => { root.destination-requested(); }
+                                            }
+                                        }
+                                    }
+                                    CheckBox {
+                                        text: "Connect to my current meeting automatically";
+                                        checked: root.auto-connect;
+                                        toggled => { root.auto-connect-changed(self.checked); }
+                                    }
+                                    CheckBox {
+                                        text: "Enable the global capture shortcut";
+                                        checked: root.hotkey-enabled;
+                                        toggled => {
+                                            root.hotkey-enabled = self.checked;
+                                            root.hotkey-enabled-changed(self.checked);
+                                        }
+                                    }
+                                    VerticalLayout {
+                                        spacing: 6px;
+
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            Text {
+                                                text: "Capture shortcut";
+                                                color: #383b43;
+                                                font-size: 13px;
+                                                min-width: 112px;
+                                                vertical-alignment: center;
+                                            }
+                                            LineEdit {
+                                                text <=> root.hotkey-text;
+                                                placeholder-text: "Win+Shift+N";
+                                                accessible-label: "Capture shortcut";
+                                                horizontal-stretch: 1;
+                                                edited(text) => { root.hotkey-error = ""; }
+                                                accepted(text) => { root.hotkey-changed(text); }
+                                            }
+                                        }
+                                        if root.hotkey-error != "": Text {
+                                            text: root.hotkey-error;
+                                            color: #b91c1c;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                        Text {
+                                            text: "Press Enter or Done to apply the shortcut.";
+                                            color: #5f6470;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                    VerticalLayout {
+                                        spacing: 6px;
+
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            Text {
+                                                text: "Note filename";
+                                                color: #383b43;
+                                                font-size: 13px;
+                                                min-width: 112px;
+                                                vertical-alignment: center;
+                                            }
+                                            LineEdit {
+                                                text <=> root.note-filename-text;
+                                                placeholder-text: "{date}_{time}_{title}";
+                                                accessible-label: "Note filename template";
+                                                horizontal-stretch: 1;
+                                                edited(text) => { root.note-filename-edited(text); }
+                                                accepted(text) => { root.note-filename-changed(text); }
+                                            }
+                                        }
+                                        Text {
+                                            text: root.note-filename-error != "" ? root.note-filename-error : root.note-filename-preview;
+                                            color: root.note-filename-error != "" ? #b91c1c : #5f6470;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                        Text {
+                                            text: "Use {date}, {time}, and {title}. The .md extension is added automatically.";
+                                            color: #5f6470;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                        Text {
+                                            text: "Title uses the meeting name, or the first non-empty line of your note.";
+                                            color: #5f6470;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                        Text {
+                                            text: "Applies to new notes. Notes stay in captures\\YYYY\\MM.";
+                                            color: #5f6470;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                        HorizontalLayout {
+                                            spacing: 8px;
+                                            alignment: start;
+                                            Button {
+                                                text: "Use default style";
+                                                clicked => {
+                                                    root.note-filename-text = "{date}_{time}_{title}";
+                                                    root.note-filename-changed(root.note-filename-text);
+                                                }
+                                            }
+                                            Button {
+                                                text: "Use date–title style";
+                                                clicked => {
+                                                    root.note-filename-text = "{date}-{title}";
+                                                    root.note-filename-changed(root.note-filename-text);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        text: "WorkIQ is provided by Scout. NoteIQ never installs or copies it.";
+                                        color: #5f6470;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+                                }
                             }
+
                             Button {
-                                text: "Choose folder";
-                                clicked => { root.destination-requested(); }
+                                text: "Done";
+                                clicked => { root.close-settings(); }
                             }
                         }
                     }
-                    CheckBox {
-                        text: "Connect to my current meeting automatically";
-                        checked: root.auto-connect;
-                        toggled => { root.auto-connect-changed(self.checked); }
-                    }
-                    CheckBox {
-                        text: "Enable the global capture shortcut";
-                        checked: root.hotkey-enabled;
-                        toggled => {
-                            root.hotkey-enabled = self.checked;
-                            root.hotkey-enabled-changed(self.checked);
-                        }
-                    }
-                    HorizontalLayout {
-                        spacing: 10px;
-                        Text {
-                            text: "Capture shortcut";
-                            color: #383b43;
-                            font-size: 13px;
-                            vertical-alignment: center;
-                        }
-                        LineEdit {
-                            text <=> root.hotkey-text;
-                            placeholder-text: "Win+Shift+N";
-                            accessible-label: "Capture shortcut";
-                            horizontal-stretch: 1;
-                            accepted(text) => { root.hotkey-changed(text); }
-                        }
-                    }
-                    Text {
-                        text: "Press Enter or Done to apply the shortcut.";
-                        color: #5f6470;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-                    Text {
-                        text: "WorkIQ is provided by Scout. NoteIQ never installs or copies it.";
-                        color: #5f6470;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-                    Rectangle { vertical-stretch: 1; }
-                    Button {
-                        text: "Done";
-                        clicked => {
-                            root.hotkey-changed(root.hotkey-text);
-                            root.settings-visible = false;
-                            root.settings-requested(false);
-                            note-editor.focus();
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                visible: !root.settings-visible;
-                background: #ffffff;
-                border-radius: 14px;
-                border-width: 1px;
-                border-color: #e6e8ed;
-                vertical-stretch: 1;
-
-                note-editor := TextEdit {
-                    x: 16px;
-                    y: 14px;
-                    width: parent.width - 32px;
-                    height: parent.height - 28px;
-                    text <=> root.note-text;
-                    accessible-label: "Note contents";
-                    font-family: "Segoe UI Variable";
-                    font-size: 15px;
-                    edited => { root.body-changed(self.text); }
-                }
-            }
-
-            HorizontalLayout {
-                visible: !root.settings-visible;
-                height: 38px;
-                spacing: 8px;
-
-                Text {
-                    text: root.has-note ? (root.saved ? "Saved" : "Unsaved") : "Draft";
-                    color: root.saved ? #166534 : #b45309;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: root.status-text;
-                    color: #5f6470;
-                    font-size: 12px;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-                Button {
-                    text: root.open-label;
-                    visible: root.has-note;
-                    clicked => { root.open-requested(); }
-                }
-                fix-folder := Button {
-                    text: "Choose folder";
-                    visible: root.destination-error;
-                    clicked => { root.destination-requested(); }
-                }
-                Button {
-                    text: "Save";
-                    clicked => { root.save-requested(); }
-                }
-                Button {
-                    text: "Close";
-                    clicked => { root.close-requested(); }
                 }
             }
         }
-    }
-
     }
 }

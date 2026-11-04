@@ -24,12 +24,23 @@ impl CaptureController {
         self.autosave.changed(now);
     }
 
-    pub fn connect_meeting(&mut self, meeting: Meeting) {
+    /// Attaches a meeting the user chose. Saving waits for the usual typing pause, so moving
+    /// through the picker does not rewrite or rename the file at every step.
+    pub fn connect_meeting(&mut self, meeting: Meeting, now: Instant) {
         self.capture.connect(meeting);
+        self.metadata_changed(now);
     }
 
-    pub fn disconnect_meeting(&mut self) {
+    pub fn disconnect_meeting(&mut self, now: Instant) {
         self.capture.disconnect();
+        self.metadata_changed(now);
+    }
+
+    /// Schedules saving a meeting or author change. An unsaved empty draft stays unsaved.
+    pub fn metadata_changed(&mut self, now: Instant) {
+        if self.capture.path.is_some() || !self.capture.is_empty() {
+            self.autosave.changed(now);
+        }
     }
 
     pub fn autosave_due(&self, now: Instant) -> bool {

@@ -1,6 +1,7 @@
 //! WCAG 2.2 AA contrast checks for every text colour in the capture window.
 
 const MAIN_WINDOW: &str = include_str!("../ui/main.slint");
+const APP_ICON: &str = include_str!("../assets/noteiq.svg");
 const BADGE_BACKGROUND: &str = "#4f46e5";
 const AA_NORMAL_TEXT: f64 = 4.5;
 
@@ -92,13 +93,9 @@ fn every_text_colour_meets_aa_on_every_surface() {
 #[test]
 fn badge_initial_meets_aa_on_the_brand_colour() {
     assert!(
-        colours("background").contains(&BADGE_BACKGROUND.to_owned()),
+        APP_ICON.contains(&format!("fill=\"{BADGE_BACKGROUND}\"")),
         "badge colour changed; update this test"
     );
-    assert!(
-        declarations("color")
-            .iter()
-            .any(|line| line == "color: white;")
-    );
+    assert!(APP_ICON.contains("fill=\"#ffffff\""));
     assert!(contrast("#ffffff", BADGE_BACKGROUND) >= AA_NORMAL_TEXT);
 }

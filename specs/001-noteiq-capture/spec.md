@@ -46,10 +46,12 @@ selected destination with its text and generated time metadata.
 
 ### User Story 2 - Add, switch, or disconnect meeting context (Priority: P1)
 
-The user sees whether a calendar meeting is connected. Exactly one current
-meeting can be connected automatically. When meetings overlap, the user chooses.
-The user can change or disconnect context; a delayed lookup cannot undo an
-explicit decision.
+The user sees whether a calendar meeting is attached in a single **Meeting**
+list whose first option is always **No meeting**. Exactly one current timed
+meeting can be attached automatically, including one that starts while an empty
+note is open. When meetings overlap, the user chooses. The user can change or
+remove the meeting; a delayed lookup, refresh, or re-evaluation cannot undo an
+explicit choice.
 
 **Why this priority**: Reliable context is the main improvement over a generic
 notepad, but it must never delay or prevent writing the note itself.
@@ -64,20 +66,54 @@ retaining note text and identity.
 1. **Given** automatic connection is enabled and exactly one current meeting
    exists, **When** meeting discovery finishes, **Then** that meeting is shown.
 2. **Given** multiple current meetings exist, **When** discovery finishes,
-   **Then** none is guessed and the user can choose among them.
-3. **Given** no current meetings exist, **When** discovery succeeds,
-   **Then** the capture shows No meeting.
-4. **Given** discovery fails, **When** the editor is open, **Then** the editor
+   **Then** none is guessed, the list stays on No meeting, and the hint shows
+   how many meetings are in progress so the user can choose one.
+3. **Given** no meeting is in progress but one starts or ended within
+   15 minutes, **When** discovery finishes, **Then** none is connected and the
+   user can choose it from the list, labelled with its local start and end times.
+4. **Given** no timed meetings are in progress or within the 15-minute window,
+   **When** discovery succeeds automatically,
+   **Then** no meeting is connected, but older retrieved meetings remain selectable.
+5. **Given** discovery fails, **When** the editor is open, **Then** the editor
    remains usable and a distinct, actionable unavailable state is shown.
-5. **Given** meeting metadata was saved, **When** the user chooses No meeting
-   and saves, **Then** meeting identifiers, title, and attendee fields are
+6. **Given** meeting metadata was saved, **When** the user chooses No meeting
+   and saves, **Then** meeting identifiers, title, and invitee fields are
    removed from the saved Markdown without changing note text.
-6. **Given** the user explicitly disconnects while a lookup is pending,
-   **When** the lookup later succeeds, **Then** the capture remains disconnected.
-7. **Given** a meeting is connected, **When** its scheduled end passes,
-   **Then** NoteIQ does not silently switch or remove it.
-8. **Given** automatic connection is disabled in Settings, **When** a new
+7. **Given** the user chooses No meeting while a lookup is pending,
+   **When** the lookup later succeeds, **Then** the capture remains without a
+   meeting.
+8. **Given** a meeting is connected, **When** its scheduled end passes,
+   **Then** NoteIQ never silently removes it, and moves an automatic meeting
+   only while the note is empty and has never been saved.
+9. **Given** automatic connection is disabled in Settings, **When** a new
    capture opens, **Then** discovery does not auto-connect a meeting.
+10. **Given** a meeting is connected, **When** the user opens the Meeting
+    list, **Then** older retrieved meetings remain available with dates and
+    local times and can be explicitly chosen.
+11. **Given** a fresh cached list or a pending lookup, **When** New note is
+    pressed, **Then** the current note is safely finished and the new capture
+    reuses the list or pending lookup instead of starting duplicate requests.
+12. **Given** invitee information is available, **When** a note is saved,
+    **Then** required and optional invitees retain names and email addresses,
+    available RSVP and explicit attendance observations; missing values remain
+    unknown and RSVP is never treated as evidence of attendance.
+13. **Given** the Meeting list is shown, **When** the user opens it, **Then**
+    its first option is No meeting, followed by retrieved meetings labelled with
+    title, date, and local times and without ordinal numbers; declined and
+    cancelled meetings are not offered.
+14. **Given** an empty, never-saved note with no meeting choice is open,
+    **When** a single cached timed meeting starts, **Then** the note attaches
+    to it within a minute without a new WorkIQ request.
+15. **Given** a note with text opened more than 15 minutes before a meeting
+    starts, **When** that meeting is in progress, **Then** it is not attached
+    automatically and the hint offers it for selection.
+16. **Given** the user chose a meeting or No meeting, **When** a refresh or
+    re-evaluation finds a different single meeting in progress, **Then** the
+    choice is kept for that note; New note starts again with automatic
+    selection.
+17. **Given** the last lookup failed, **When** cached meetings are re-evaluated,
+    **Then** nothing is attached automatically and the hint says earlier
+    results are shown.
 
 ### User Story 3 - Save to one understandable destination (Priority: P1)
 
@@ -97,8 +133,9 @@ chooser; verify the text remains open and unsaved.
 **Acceptance Scenarios**:
 
 1. **Given** no destination has been changed, **When** a note is saved,
-   **Then** it is stored under the configured vault's
-   `captures/YYYY/MM/YYYY-MM-DD_HHmm_<slug>.md` location.
+   **Then** it is stored under the configured vault's `captures/YYYY/MM/`
+   folder, named `YYYY-MM-DD_HHmm_<slug>.md` by the default
+   `{date}_{time}_{title}` note filename setting.
 2. **Given** the user selects OneDrive Notes, **When** a note is saved,
    **Then** it is stored under that folder and not in the vault.
 3. **Given** a destination is missing or unwritable, **When** a save is
@@ -107,7 +144,12 @@ chooser; verify the text remains open and unsaved.
 4. **Given** the user cancels destination selection, **When** the error state
    returns, **Then** the capture remains open and is not reported as saved.
 5. **Given** a new note is saved, **When** its filename is chosen, **Then** it
-   uses a stable, safe slug and does not overwrite an existing note.
+   uses a safe meeting-name slug (or note-text fallback) and does not overwrite
+   an existing note. Meeting changes update only the active filename.
+6. **Given** the user changes the note filename setting, **When** a later note
+   is saved, **Then** it uses the new template while notes already saved keep
+   their names; an invalid template is explained inline and the previous
+   setting is kept.
 
 ### User Story 4 - Open capture from the workflows already in use (Priority: P2)
 
@@ -161,6 +203,41 @@ are described.
    limitation and verification steps are documented; no duplicate companion
    document is created.
 
+### User Story 6 - Obtain a verified native Windows release (Priority: P2)
+
+The user can obtain a release package for Windows x64 or ARM64. Each package
+contains the matching native executable and its supporting README and LICENSE,
+with a SHA-256 manifest and GitHub provenance attestation. Releases are created
+through the Release Please draft workflow and published only after both
+architectures are built from the same tagged commit.
+
+**Why this priority**: Both supported Windows architectures need reproducible
+native packages, and users need a way to check package integrity and provenance.
+
+**Independent Test**: Exercise both native build jobs from one tag, verify each
+executable's PE architecture, inspect both ZIP contents, compare package hashes
+with `SHA256SUMS.txt`, verify attestations with GitHub CLI, and confirm the
+existing Release Please draft is published without creating a second release.
+
+**Acceptance Scenarios**:
+
+1. **Given** a pull request changes the application, **When** CI runs,
+   **Then** portable checks execute on Linux x64 and ARM64 and native desktop
+   checks execute on Windows x64 and ARM64.
+2. **Given** a `v*` tag or an explicitly retried tag, **When** the release
+   workflow runs, **Then** both native architectures are built from that exact
+   tagged commit and their executable architectures are verified.
+3. **Given** both builds succeed, **When** release archives are prepared,
+   **Then** each ZIP contains `noteiq.exe`, `README.md`, and `LICENSE`, and the
+   release includes `SHA256SUMS.txt` and GitHub attestations.
+4. **Given** Release Please has made a draft release, **When** the local release
+   workflow finishes successfully, **Then** it uploads both packages and
+   publishes that draft; it MUST NOT create an independent release.
+5. **Given** a user checks a downloaded package, **When** they compare its
+   digest and verify its attestation, **Then** integrity and provenance
+   verification steps are documented, along with the limitation that packages
+   are not Authenticode-signed and SmartScreen warnings may remain.
+
 ## Edge Cases
 
 - A failed lookup is distinct from a successful lookup returning no meetings.
@@ -181,6 +258,14 @@ are described.
   editing interval.
 - A URI or CLI request with malformed parameters reports an actionable error
   without executing arbitrary commands or paths.
+- A refresh that no longer returns the attached meeting keeps it listed and
+  attached.
+- A meeting that crosses a daylight-saving change shows each endpoint in the
+  offset in force at that instant.
+- A saved file replaced or edited in the vault so that it no longer carries the
+  note's ID is never overwritten, renamed, or deleted.
+- Calendar titles containing Markdown or HTML display literally and cannot hide
+  or restructure the generated note.
 
 ## Requirements *(mandatory)*
 
@@ -189,8 +274,8 @@ are described.
 - **FR-001**: System MUST open a focused plain-text Markdown editor without a
   required title field.
 - **FR-002**: System MUST write timestamps, timezone, source, tags, and optional
-  meeting metadata as Markdown front matter, without placing generated fields
-  in the editable note body.
+  meeting metadata as Markdown front matter and generate the surrounding note
+  layout, without placing generated fields in the editor.
 - **FR-003**: System MUST autosave after a typing pause and periodically during
   continuous typing, and support Ctrl+S without closing the window.
 - **FR-004**: System MUST retain a cleared note during editing and delete an
@@ -203,23 +288,34 @@ are described.
   NEVER silently fall back, dual-write, or claim an unsuccessful save succeeded.
 - **FR-008**: System MUST preserve editor text and clearly prompt for a different
   destination when the selected one cannot be written.
-- **FR-009**: System MUST generate safe, stable capture paths in the selected
+- **FR-009**: System MUST generate safe capture paths in the selected
   `captures/YYYY/MM/` folder and avoid overwriting unrelated files.
 - **FR-010**: System MUST discover current meetings using Scout's local WorkIQ
   MCP executable when available and show unavailable/failed states separately
   from No meeting.
-- **FR-011**: System MUST auto-connect only for exactly one eligible current
-  meeting; for multiple meetings it MUST present a chooser.
+- **FR-011**: System MUST auto-connect only for exactly one timed meeting in
+  progress that is not all-day, declined, or cancelled, and never while the last
+  lookup failed. While a capture is open it MUST re-evaluate the cached list
+  every 60 seconds without a WorkIQ request. A note without a meeting choice
+  attaches when it is empty or the meeting started no later than 15 minutes
+  after the note was created; an automatic meeting moves only while the note is
+  empty and has never been saved. Otherwise the note stays on No meeting and
+  the hint reports how many meetings are in progress.
 - **FR-012**: System MUST allow the user to connect to, switch, and disconnect a
-  meeting; an explicit choice MUST be preserved against late lookups.
-- **FR-013**: System MUST remove persisted meeting and attendee metadata when
+  meeting through one Meeting list whose first option is No meeting and whose
+  meeting options are unnumbered and show title, date, and local times. A
+  committed choice, including No meeting, MUST be applied at once, saved after
+  the autosave pause, and preserved against late lookups, refreshes, and
+  re-evaluation for that note.
+- **FR-013**: System MUST remove persisted meeting and invitee metadata when
   the user chooses No meeting and saves.
 - **FR-014**: System MUST allow the user to configure automatic meeting
   connection without disabling the plain-text editor.
 - **FR-015**: System MUST launch capture through the tray, a configurable global
   shortcut, the `noteiq new` command, and the `noteiq://new` URI.
 - **FR-016**: System MUST focus the existing capture on repeated invocation and
-  expose Ctrl+N for an intentional new capture.
+  expose Ctrl+N and a New note button for an intentional new capture, preserving
+  the existing draft if saving fails.
 - **FR-017**: System MUST provide rolling diagnostic logs with failure
   correlation and exclude note bodies, credentials, and raw meeting data.
 - **FR-018**: System MUST provide clear missing-dependency guidance when Scout
@@ -231,17 +327,89 @@ are described.
 - **FR-021**: System MUST include comprehensive platform-independent tests,
   including a regression asserting that saved meeting fields are removed after
   selecting No meeting.
+- **FR-022**: System MUST save required/optional invitees separately, preserving
+  `Name <email>` values and available RSVP/attendance without inventing missing data.
+- **FR-023**: System MUST place a blank line between closing YAML front matter
+  and the unchanged Markdown body.
+- **FR-024**: System MUST embed a consistent, scaling-aware icon for the native
+  window, taskbar, executable, tray, and registered URI.
+- **FR-025**: System MUST retain the full retrieved meeting list in memory across
+  captures, allow selecting earlier meetings while connected, share in-flight
+  lookups, refresh on request or after five minutes on a new capture, and retain
+  cached entries when refresh fails.
+- **FR-026**: When the note's filename template uses `{title}`, System MUST use
+  the connected meeting name in the active note's filename, falling back to note
+  text when absent. Late discovery, switching, or
+  disconnecting MUST safely update that filename without changing its original
+  timestamp, folder, or note ID, overwriting another note, or leaving a duplicate.
+  Body edits alone MUST NOT rename an already-saved note. Closed notes and vault
+  links MUST NOT be bulk-modified.
+- **FR-027**: System MUST write notes in the vault's capture layout (schema 3):
+  vault properties first, then meeting properties, then NoteIQ bookkeeping; a
+  body with an escaped title, a From/Captured line, Meeting details, empty
+  Summary and Follow-ups sections, and the user's text verbatim in a collapsed
+  Raw capture block. Meeting times MUST use the capture's named time zone at
+  each instant. Existing notes MUST NOT be migrated.
+- **FR-028**: System MUST record the note taker as a `from` wikilink from the
+  Windows display name, looked up without delaying the editor, or from an
+  `author_name` setting. A lookup that finishes after the open note was saved
+  MUST update that note through the ordinary save path; closed notes are not
+  rewritten.
+- **FR-029**: System MUST let the user set the note filename template with the
+  `{date}`, `{time}`, and `{title}` placeholders (default
+  `{date}_{time}_{title}`), show an example while editing, and reject empty,
+  path, unknown-placeholder, unbalanced, invalid-character, reserved-name, and
+  over-long templates with a specific inline explanation while keeping the
+  previous setting. A template MUST be fixed when a note is first saved, so a
+  change applies only to notes not yet saved.
+- **FR-030**: System MUST show meeting state as a hint under the Meeting list,
+  separate from save status, distinguishing checking, connected automatically,
+  selected, No meeting chosen, overlapping meetings, nothing found, automatic
+  connection off, WorkIQ unavailable, and failed refresh with earlier results.
+- **FR-031**: System MUST close the capture through the window's native close
+  button or Alt+F4, without a duplicate Close button, applying the same save
+  and empty-note rules.
+- **FR-032**: Before rewriting, renaming, or deleting a saved file, System MUST
+  confirm the file still carries the note's ID and otherwise report that the
+  note changed outside NoteIQ instead of changing it.
+- **FR-033**: System MUST support native Windows x64 and ARM64 builds. WorkIQ
+  discovery MUST prefer Scout's native architecture payload, fall back to the
+  other bundled architecture when the native payload is absent, and honor a
+  configured executable path before either discovered path.
+- **FR-034**: CI MUST run portable formatting, Clippy, and tests on Linux x64
+  and ARM64, and native desktop Clippy/tests on Windows x64 and ARM64. Each
+  Windows build MUST verify that its executable matches the requested target.
+- **FR-035**: Shared lint, configuration-sync, Release Please, labeler,
+  label-sync, and assign-issue-to-codeowners automation MUST reuse pinned
+  reusable workflows from `DevSecNinja/.github`. Repository-specific Rust CI,
+  Windows builds, and release artifact publishing MUST remain local where no
+  suitable shared Rust workflow or draft-compatible publishing workflow exists.
+- **FR-036**: Release Please MUST manage the virtual Cargo workspace starting
+  at `0.1.0`, update root `Cargo.toml` and workspace package versions in
+  `Cargo.lock`, and create a draft release with tag creation enabled. On a
+  `v*` tag or manual tag retry, release automation MUST build x64 and ARM64
+  from the same tagged commit, package each executable with `README.md` and
+  `LICENSE`, generate `SHA256SUMS.txt` and GitHub attestations, and publish
+  only the existing Release Please draft.
+- **FR-037**: Documentation MUST explain the Release Please GitHub App and
+  repository settings required for automation, provide SHA-256 and GitHub
+  attestation verification steps, and state that neither mechanism is
+  Authenticode signing or removes SmartScreen warnings.
 
 ### Key Entities
 
 - **Capture**: One user editing session; has editable text, origin, creation
-  time, optional selected meeting, save state, and optional persisted path.
+  time, optional author, optional selected meeting and how it was chosen, save
+  state, optional persisted path, and the filename template fixed at first save.
 - **Meeting context**: A calendar event eligible at capture time, including
-  stable identifier and available title, schedule, organizer, and attendees.
+  stable identifier and available title, schedule, organizer, invitees, the
+  user's RSVP, and cancelled/declined state.
 - **Destination**: One configured output root and destination type selected for a
   new capture.
-- **Saved note**: A Markdown document identified by a stable note ID and path,
-  containing metadata and user-authored body text.
+- **Note filename template**: A user setting combining `{date}`, `{time}`, and
+  `{title}` that names new notes inside `captures/YYYY/MM/`.
+- **Saved note**: A Markdown document identified by a stable note ID and its current path,
+  containing schema 3 metadata, a generated layout, and the user's text verbatim.
 - **Integration state**: WorkIQ discovery, availability, authentication, and
   error state that remains independent of editor usability.
 
@@ -267,8 +435,18 @@ are described.
   continue to edit and save a note when a writable destination exists.
 - **SC-009**: In 100% of failed-save test cases, NoteIQ keeps unsaved text open
   and does not display a successful-save state.
-- **SC-010**: A user can complete routine capture, save, disconnect, and close
-  actions entirely from the keyboard.
+- **SC-010**: A user can complete routine capture, save, meeting choice
+  (including No meeting), and close actions entirely from the keyboard.
+- **SC-011**: In 100% of meeting re-evaluation cases, an explicit choice of a
+  meeting or No meeting is unchanged by later lookups, refreshes, and
+  re-evaluation, and nothing is attached automatically after a failed lookup.
+- **SC-012**: In 100% of note filename validation cases, an invalid template is
+  rejected with a specific explanation and the saved setting is unchanged; valid
+  templates never overwrite an existing note.
+- **SC-013**: In 100% of release validation cases, x64 and ARM64 packages come
+  from the same tag, have verified executable architectures, match their
+  published SHA-256 entries, have verifiable attestations, and are attached to
+  the pre-existing Release Please draft only.
 
 ## Assumptions
 
@@ -282,9 +460,20 @@ are described.
 - OneDrive sync does not by itself prove that WorkIQ can search Markdown
   contents. The feature remains Markdown-only and documents retrieval limits.
 - No local recovery copy or automatic destination fallback is created.
-- Windows is the user-facing platform; Linux under WSL is used for
-  platform-independent tests.
+- Windows x64 and ARM64 are the user-facing platforms; Linux x64 and ARM64 are
+  used for platform-independent CI tests.
 - Initial UI styling follows the operating system light/dark theme and keyboard
   conventions. Rich-text editing and rendered Markdown preview are out of scope.
 - The configured vault path is a user default and MUST be overridden by local
   settings when an installation uses a different location.
+- Overlapping meetings are never tie-broken by RSVP or organizer; the user
+  chooses. RSVP is not evidence of attendance.
+- Re-evaluation every 60 seconds uses cached meetings only. WorkIQ is contacted
+  at startup and on Refresh, and also for a new capture or a change to
+  automatic connection when the cache is older than five minutes or the last
+  lookup failed.
+- Turning automatic connection off does not detach a meeting that is already
+  attached, and a meeting cancelled after it was attached stays attached until
+  the user changes it.
+- An author lookup that finishes after a note was closed does not rewrite that
+  note, so later edits in the vault are never overwritten in the background.

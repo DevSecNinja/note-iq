@@ -1,6 +1,6 @@
 mod common;
 
-use common::{capture, instant};
+use common::{capture, instant, raw_capture};
 use noteiq_core::destination::{Destination, finish_capture, save_capture};
 use tempfile::tempdir;
 
@@ -22,14 +22,12 @@ fn clearing_saved_text_keeps_file_during_editing_and_deletes_on_close() {
         path.exists(),
         "autosave must not delete an actively edited note"
     );
-    assert_eq!(
-        std::fs::read_to_string(&path)
-            .unwrap()
-            .matches("---")
-            .count(),
-        2,
+    let cleared = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        cleared.starts_with("---\nkind: capture\n"),
         "cleared text remains represented by a valid Markdown file"
     );
+    assert!(raw_capture(&cleared).trim().is_empty());
 
     finish_capture(&mut capture).unwrap();
     assert!(!path.exists(), "closing an empty capture deletes its file");
