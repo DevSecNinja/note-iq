@@ -23,7 +23,7 @@ pub fn parse_launch_request(arguments: &[String]) -> Result<LaunchRequest, Launc
 
 impl LaunchRequest {
     pub fn from_uri(uri: &str) -> Result<Self, LaunchError> {
-        if uri.eq_ignore_ascii_case("noteiq://new") {
+        if uri.eq_ignore_ascii_case("noteiq://new") || uri.eq_ignore_ascii_case("noteiq://new/") {
             Ok(Self::NewNote)
         } else {
             Err(LaunchError::InvalidUri)

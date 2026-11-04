@@ -16,6 +16,16 @@ fn accepts_only_the_explicit_new_note_command_and_uri() {
 }
 
 #[test]
+fn accepts_the_uri_canonicalized_by_the_windows_shell() {
+    for uri in ["noteiq://new/", "NOTEIQ://NEW/"] {
+        assert_eq!(
+            LaunchRequest::from_uri(uri).unwrap(),
+            LaunchRequest::NewNote
+        );
+    }
+}
+
+#[test]
 fn rejects_untrusted_arguments_and_uri_paths() {
     assert!(
         parse_launch_request(&[
@@ -26,8 +36,16 @@ fn rejects_untrusted_arguments_and_uri_paths() {
         ])
         .is_err()
     );
-    assert!(LaunchRequest::from_uri("noteiq://new/../../file.md").is_err());
-    assert!(LaunchRequest::from_uri("noteiq://new?path=note.md").is_err());
+    for uri in [
+        "noteiq://new/../../file.md",
+        "noteiq://new?path=note.md",
+        "noteiq://new/?path=note.md",
+        "noteiq://new/#fragment",
+        "noteiq://new//",
+        "noteiq://new/file.md",
+    ] {
+        assert!(LaunchRequest::from_uri(uri).is_err(), "{uri}");
+    }
 }
 
 #[test]
