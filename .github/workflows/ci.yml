@@ -101,6 +101,7 @@ jobs:
         run: cargo test --workspace --features noteiq-windows/desktop --locked --target $env:RUST_TARGET
 
   build:
-    uses: ./.github/workflows/build-windows.yml
+    # actionlint 1.7.12 rejects $/ calls; keep commit-bound workflow reuse until its pin supports them.
+    uses: ./.github/workflows/build-windows.yml # zizmor: ignore[self-repository]
     with:
       source-ref: ${{ inputs.source-ref || github.sha }}

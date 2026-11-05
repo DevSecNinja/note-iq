@@ -43,6 +43,7 @@ tray-icon = { version = "0.21", optional = true }
 windows-sys = { version = "0.61", optional = true, features = [
     "Win32_Foundation",
     "Win32_Security_Authentication_Identity",
+    "Win32_System_RemoteDesktop",
     "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = { version = "0.55", optional = true }

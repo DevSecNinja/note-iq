@@ -1,3 +1,5 @@
+#![cfg(all(windows, feature = "desktop"))]
+
 #[cfg(windows)]
 mod app;
 #[cfg(windows)]
@@ -11,6 +13,7 @@ mod foreground;
 #[cfg(windows)]
 mod hotkey;
 #[cfg(windows)]
+#[allow(unsafe_code)]
 mod instance;
 #[cfg(windows)]
 mod launch;

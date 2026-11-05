@@ -60,8 +60,9 @@ Another app may already own **Win+Shift+N**. NoteIQ then shows "Win+Shift+N is
 already used by another app" and keeps working without a shortcut. Open
 **Settings**, type another shortcut such as `Ctrl+Alt+N`, and press **Enter**
 or **Done** to apply it. NoteIQ accepts a letter, digit, or F-key combined
-with Ctrl, Alt, Shift, or Win. If the new shortcut is also taken, the previous
-one stays active.
+with Ctrl, Alt, or Win (optionally also Shift). F-keys can be used alone or
+with Shift; Shift-only typing keys are rejected so normal typing keeps working.
+If the new shortcut is also taken, the previous one stays active.
 
 **OneNote conflict.** Desktop OneNote's "Send to OneNote" tray helper
 (`ONENOTEM.EXE`) registers **Win+Shift+N** (new side note) and **Win+Alt+N**
@@ -186,7 +187,11 @@ attendance or RSVP details.
 ### Settings file
 
 Settings are kept in `%APPDATA%\DevSecNinja\NoteIQ\config\settings.toml`, which
-is created the first time you change a setting. Besides the options in
+is created the first time you change a setting. If its TOML cannot be parsed,
+NoteIQ first preserves the original in a unique `settings-*.toml.bak` file
+beside it, then shows a recovery message and uses defaults. A backup or read
+failure stops startup rather than allowing defaults to overwrite unreadable settings.
+Besides the options in
 Settings, it accepts `author_name`. A hand-edited `note_filename` that is not
 valid falls back to the default, and the log records why without the template
 text.
@@ -280,9 +285,9 @@ exercised offline with both real executables: ZIP contents, PE machine IDs, and
 SHA-256 checksums all passed. Release guard checks rejected malformed tags,
 workflow-ref/provenance mismatches, and attempts to edit a published release.
 The ZIP packaging uses Python's standard library and does not require an
-external ZIP utility. GitHub Actions has not run these uncommitted workflow
-changes; no remote writes were authorized, so hosted CI and release publication
-are not claimed.
+external ZIP utility. PR #5 has also passed hosted Linux x64/ARM64 checks,
+Windows x64/ARM64 tests and both release artifact builds. Release publication
+has not been exercised; the app credentials and repository setup below remain required.
 
 After downloading a release archive, compare its hash with the matching entry
 in `SHA256SUMS.txt`:

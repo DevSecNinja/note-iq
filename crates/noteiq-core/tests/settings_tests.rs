@@ -4,6 +4,47 @@ use std::collections::HashMap;
 use tempfile::tempdir;
 
 #[test]
+fn malformed_settings_are_backed_up_before_defaults_can_be_saved() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("settings.toml");
+    let original = "destination_root = 'my-custom-vault'\nhotkey = [broken";
+    std::fs::write(&path, original).unwrap();
+    let (settings, backup) = Settings::load_with_recovery(&path, temp.path()).unwrap();
+    let backup = backup.expect("recovery must preserve the unreadable configuration");
+    assert_eq!(std::fs::read_to_string(&backup).unwrap(), original);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    settings.save(&path).unwrap();
+    assert_eq!(std::fs::read_to_string(backup).unwrap(), original);
+    assert_eq!(Settings::load(&path, temp.path()).unwrap(), settings);
+}
+
+#[test]
+fn settings_recovery_does_not_replace_previous_backups() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("settings.toml");
+    std::fs::write(&path, "broken = [").unwrap();
+    let (_, first) = Settings::load_with_recovery(&path, temp.path()).unwrap();
+    let (_, second) = Settings::load_with_recovery(&path, temp.path()).unwrap();
+    assert_ne!(first, second);
+    assert!(first.unwrap().exists());
+    assert!(second.unwrap().exists());
+}
+
+#[test]
+fn settings_recovery_does_not_treat_io_errors_as_a_default_configuration() {
+    let temp = tempdir().unwrap();
+    assert!(Settings::load_with_recovery(temp.path(), temp.path()).is_err());
+    let path = temp.path().join("settings.toml");
+    let (settings, backup) = Settings::load_with_recovery(&path, temp.path()).unwrap();
+    assert!(backup.is_none());
+    assert!(!path.exists());
+    settings.save(&path).unwrap();
+    let (loaded, backup) = Settings::load_with_recovery(&path, temp.path()).unwrap();
+    assert_eq!(settings, loaded);
+    assert!(backup.is_none());
+}
+
+#[test]
 fn defaults_to_the_requested_vault_relative_to_the_user_profile() {
     let profile = tempfile::tempdir().unwrap();
     let profile = profile.path();

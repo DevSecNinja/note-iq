@@ -1612,7 +1612,7 @@ mod tests {
         apply_hotkey(&window, &mut state, None, "N");
         assert_eq!(
             window.get_hotkey_error(),
-            "Add Win, Ctrl, Alt or Shift so the shortcut doesn't block normal typing."
+            "Add Win, Ctrl or Alt so the shortcut doesn't block normal typing."
         );
         assert_eq!(state.settings.hotkey, "Win+Shift+N");
         assert_eq!(state.status, "Ready");

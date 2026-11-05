@@ -69,7 +69,8 @@ jobs:
 
   validate-and-build:
     needs: prepare
-    uses: ./.github/workflows/ci.yml
+    # actionlint 1.7.12 rejects $/ calls; keep commit-bound workflow reuse until its pin supports them.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
     with:
       source-ref: ${{ needs.prepare.outputs.sha }}
 

@@ -50,7 +50,7 @@ checksum manifest, then verify its attestation:
 
 ```powershell
 $repo = gh repo view --json nameWithOwner --jq .nameWithOwner
-gh attestation verify .\noteiq-win-x64.zip --repo $repo
+gh attestation verify .\noteiq-v0.1.0-windows-x64.zip --repo $repo
 ```
 
 Release verification and the required Release Please app/repository setup are
@@ -61,9 +61,9 @@ the artifact provenance identifies the tag as the source:
 gh workflow run release.yml --ref v0.1.0 -f tag=v0.1.0
 ```
 
-Local x64-under-emulation, ARM64, and WSL validation passed, but the
-GitHub-hosted workflows have not run because the changes remain uncommitted and
-no remote writes were authorized. Checksums and attestations are not code
+Local x64-under-emulation, ARM64, and WSL validation passed. PR #5 also passed
+hosted Linux x64/ARM64 checks, Windows x64/ARM64 tests and both artifact builds.
+Release publication remains unexercised. Checksums and attestations are not code
 signing; SmartScreen may still warn because Authenticode signing is not
 configured.
 

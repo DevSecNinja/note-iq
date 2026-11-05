@@ -11,7 +11,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let noteiq_core::launch::LaunchRequest::NewNote = launch::parse_arguments(&arguments)?;
     let source = if arguments
         .get(1)
-        .is_some_and(|argument| argument.starts_with("noteiq:"))
+        .is_some_and(|argument| launch::is_noteiq_uri(argument))
     {
         CaptureSource::Uri
     } else if arguments.len() > 1 {
@@ -33,20 +33,17 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 .map(|project| project.config_dir().join("settings.toml"))
                 .unwrap_or_else(|| profile.join(".noteiq").join("settings.toml"));
 
-            let (settings, startup_message) = match Settings::load(&settings_path, &profile) {
-                Ok(settings) => (settings, None),
-                Err(error) => {
-                    let _ = error;
-                    (
-                        Settings::default_for(&profile),
-                        Some("Settings could not be loaded. NoteIQ is using defaults.".to_owned()),
-                    )
-                }
-            };
-
             let log_directory =
                 default_log_directory().unwrap_or_else(|| profile.join(".noteiq").join("logs"));
             let _log_guard = initialize_logging(&log_directory).ok();
+            let (settings, backup) = Settings::load_with_recovery(&settings_path, &profile)?;
+            let startup_message = backup.map(|path| {
+                tracing::warn!(failure_class = "settings_parse_failed_backed_up");
+                format!(
+                    "Settings could not be read. The original is preserved at {}. Using defaults.",
+                    path.display()
+                )
+            });
 
             ui::run(settings, settings_path, source, role, startup_message)?;
         }

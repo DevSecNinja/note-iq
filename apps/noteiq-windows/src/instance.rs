@@ -24,7 +24,22 @@ pub enum InstanceRole {
 }
 
 pub fn start_or_forward(source: CaptureSource) -> Result<InstanceRole, String> {
-    start_or_forward_named(SOCKET_NAME, source)
+    let mut session = 0;
+    // SAFETY: the process ID is ours and `session` is a valid writable u32.
+    if unsafe {
+        windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+            std::process::id(),
+            &mut session,
+        )
+    } == 0
+    {
+        return Err("NoteIQ could not identify its Windows session.".into());
+    }
+    start_or_forward_named(&session_socket_name(session), source)
+}
+
+fn session_socket_name(session: u32) -> String {
+    format!("{SOCKET_NAME}-{session}")
 }
 
 fn start_or_forward_named(
@@ -86,6 +101,12 @@ fn forward_to_running_instance(socket_name: &str, source: CaptureSource) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_sessions_have_separate_channels() {
+        assert_ne!(session_socket_name(1), session_socket_name(2));
+        assert_eq!(session_socket_name(1), session_socket_name(1));
+    }
 
     #[test]
     fn second_launch_forwards_its_source_to_the_running_instance() {

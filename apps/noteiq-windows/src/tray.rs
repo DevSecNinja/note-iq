@@ -1,5 +1,5 @@
 use tray_icon::{
-    TrayIcon, TrayIconBuilder,
+    MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
     menu::{Menu, MenuEvent, MenuId, MenuItem},
 };
 
@@ -59,9 +59,67 @@ impl TrayController {
                 None
             };
         }
-        tray_icon::TrayIconEvent::receiver()
-            .try_recv()
-            .ok()
-            .map(|_| TrayAction::Show)
+        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+            if event.id() == self._icon.id() && activates_capture(&event) {
+                return Some(TrayAction::Show);
+            }
+        }
+        None
+    }
+}
+
+fn activates_capture(event: &TrayIconEvent) -> bool {
+    matches!(
+        event,
+        TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        }
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn click(button: MouseButton, button_state: MouseButtonState) -> TrayIconEvent {
+        TrayIconEvent::Click {
+            id: "test".into(),
+            position: Default::default(),
+            rect: Default::default(),
+            button,
+            button_state,
+        }
+    }
+
+    #[test]
+    fn only_a_released_left_click_opens_the_capture() {
+        assert!(activates_capture(&click(
+            MouseButton::Left,
+            MouseButtonState::Up
+        )));
+        for event in [
+            click(MouseButton::Left, MouseButtonState::Down),
+            click(MouseButton::Right, MouseButtonState::Up),
+            click(MouseButton::Middle, MouseButtonState::Up),
+            TrayIconEvent::Enter {
+                id: "test".into(),
+                position: Default::default(),
+                rect: Default::default(),
+            },
+            TrayIconEvent::Move {
+                id: "test".into(),
+                position: Default::default(),
+                rect: Default::default(),
+            },
+            TrayIconEvent::Leave {
+                id: "test".into(),
+                position: Default::default(),
+                rect: Default::default(),
+            },
+        ] {
+            assert!(!activates_capture(&event), "{event:?}");
+        }
     }
 }

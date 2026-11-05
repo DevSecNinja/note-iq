@@ -64,10 +64,13 @@ impl Settings {
     }
 
     pub fn load(path: &Path, user_profile: &Path) -> Result<Self, SettingsError> {
-        if !path.exists() {
-            return Ok(Self::default_for(user_profile));
-        }
-        let contents = fs::read_to_string(path)?;
+        let contents = match fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default_for(user_profile));
+            }
+            Err(error) => return Err(error.into()),
+        };
         let settings = toml::from_str(&contents)?;
         Ok(settings)
     }
@@ -83,6 +86,33 @@ impl Settings {
             .persist(path)
             .map_err(|error| SettingsError::Io(error.error))?;
         Ok(())
+    }
+
+    /// Recover syntax errors only after preserving the original file. I/O errors remain
+    /// failures: an unreadable file must never be replaced with defaults.
+    pub fn load_with_recovery(
+        path: &Path,
+        user_profile: &Path,
+    ) -> Result<(Self, Option<PathBuf>), SettingsError> {
+        match Self::load(path, user_profile) {
+            Ok(settings) => Ok((settings, None)),
+            Err(SettingsError::Parse(_)) => {
+                let parent = path.parent().ok_or(SettingsError::InvalidPath)?;
+                let contents = fs::read(path)?;
+                let mut backup = tempfile::Builder::new()
+                    .prefix("settings-")
+                    .suffix(".toml.bak")
+                    .tempfile_in(parent)?;
+                std::io::Write::write_all(&mut backup, &contents)?;
+                backup.as_file().sync_all()?;
+                let (_, backup_path) = backup.keep().map_err(|error| error.error)?;
+                Ok((Self::default_for(user_profile), Some(backup_path)))
+            }
+            Err(error) => {
+                tracing::warn!(failure_class = "settings_load_failed");
+                Err(error)
+            }
+        }
     }
 }
 
@@ -114,7 +144,7 @@ pub enum HotkeyError {
     Empty,
     #[error("Add a key after the modifiers, such as Win+Shift+N.")]
     MissingKey,
-    #[error("Add Win, Ctrl, Alt or Shift so the shortcut doesn't block normal typing.")]
+    #[error("Add Win, Ctrl or Alt so the shortcut doesn't block normal typing.")]
     MissingModifier,
     #[error("\"{0}\" isn't a modifier. Use Win, Ctrl, Alt or Shift.")]
     UnknownModifier(String),
@@ -161,7 +191,7 @@ pub fn normalize_hotkey(setting: &str) -> Result<String, HotkeyError> {
             modifiers.push(modifier);
         }
     }
-    if modifiers.is_empty() && !is_function_key(key) {
+    if !modifiers.iter().any(|modifier| *modifier != "Shift") && !is_function_key(key) {
         return Err(HotkeyError::MissingModifier);
     }
     let key = if key.chars().count() == 1 {

@@ -19,7 +19,8 @@ fn common_modifier_spellings_are_accepted_case_insensitively() {
         ("Control+Option+Space", "Ctrl+Alt+Space"),
         ("Windows+KeyN", "Meta+KeyN"),
         ("Super+Shift+F2", "Meta+Shift+F2"),
-        ("Shift+Shift+N", "Shift+N"),
+        ("Ctrl+Ctrl+N", "Ctrl+N"),
+        ("Shift+F9", "Shift+F9"),
         ("F9", "F9"),
     ];
 
@@ -34,6 +35,9 @@ fn incomplete_or_typing_shortcuts_are_rejected_with_actionable_messages() {
         ("", HotkeyError::Empty),
         ("   ", HotkeyError::Empty),
         ("N", HotkeyError::MissingModifier),
+        ("Shift+N", HotkeyError::MissingModifier),
+        ("Shift+Shift+N", HotkeyError::MissingModifier),
+        ("Shift+Space", HotkeyError::MissingModifier),
         ("Win+Shift", HotkeyError::MissingKey),
         ("Win+", HotkeyError::MissingKey),
         ("Win++N", HotkeyError::MissingKey),
