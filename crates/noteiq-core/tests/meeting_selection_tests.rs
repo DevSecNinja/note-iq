@@ -1,5 +1,6 @@
 mod common;
 
+use chrono::DateTime;
 use common::{instant, meeting};
 use noteiq_core::meeting::{
     MeetingSelection, choice_label, meeting_choices, meetings_in_progress, select_current_meeting,
@@ -24,6 +25,7 @@ fn all_day(id: &str) -> Meeting {
     event.title = Some("Company holiday".to_owned());
     event.start = Some(at("00:00"));
     event.end = Some(at("00:00") + chrono::TimeDelta::days(1));
+    event.all_day = true;
     event
 }
 
@@ -161,6 +163,22 @@ fn all_day_events_alone_never_prompt_but_are_offered_on_request() {
         select_current_meeting(&[all_day, meeting()], instant(), true),
         MeetingSelection::Connected(selected) if selected.id == "event-42"
     ));
+}
+
+#[test]
+fn explicit_all_day_events_are_not_auto_connected_across_spring_dst() {
+    let start = DateTime::parse_from_rfc3339("2026-03-29T00:00:00+01:00").unwrap();
+    let end = DateTime::parse_from_rfc3339("2026-03-30T00:00:00+02:00").unwrap();
+    let mut event = meeting();
+    event.start = Some(start);
+    event.end = Some(end);
+    event.all_day = true;
+
+    assert_eq!(
+        select_current_meeting(&[event.clone()], at("12:00"), true),
+        MeetingSelection::NoMeeting
+    );
+    assert!(choice_label(&event).ends_with("all day"));
 }
 
 #[test]

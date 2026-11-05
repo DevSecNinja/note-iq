@@ -64,6 +64,8 @@ impl DiagnosticEvent {
 pub enum DiagnosticsError {
     #[error("The log directory is unavailable: {0}")]
     Directory(#[from] io::Error),
+    #[error("The log file could not be opened.")]
+    Appender(#[from] tracing_appender::rolling::InitError),
     #[error("The log subscriber could not be initialized.")]
     Subscriber,
 }
@@ -76,7 +78,10 @@ pub fn default_log_directory() -> Option<PathBuf> {
 pub fn initialize_logging(log_directory: &Path) -> Result<WorkerGuard, DiagnosticsError> {
     fs::create_dir_all(log_directory)?;
     prune_old_logs(log_directory)?;
-    let appender = tracing_appender::rolling::daily(log_directory, "noteiq.log");
+    let appender = tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("noteiq.log")
+        .build(log_directory)?;
     let (writer, guard) = tracing_appender::non_blocking(appender);
     fmt()
         .with_env_filter(

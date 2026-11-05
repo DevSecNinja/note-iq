@@ -88,6 +88,31 @@ fn external_replacement_is_reported_without_overwriting_or_retargeting_the_note(
 }
 
 #[test]
+fn failed_resave_of_a_clean_capture_marks_it_dirty_and_prevents_discard_on_close() {
+    let temp = tempdir().unwrap();
+    let destination = Destination::new(temp.path().to_path_buf());
+    let mut controller = CaptureController::new(capture());
+    controller.edit("Keep the original text", Instant::now());
+    let path = controller
+        .save(&destination, instant())
+        .unwrap()
+        .expect("note saved");
+    assert!(!controller.is_dirty());
+
+    let replacement = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace(&controller.capture.id.to_string(), "some-other-note");
+    std::fs::write(&path, replacement).unwrap();
+    assert!(matches!(
+        controller.save(&destination, instant()),
+        Err(DestinationError::ExternalConflict(_))
+    ));
+
+    assert!(controller.is_dirty());
+    assert_eq!(controller.capture.body, "Keep the original text");
+}
+
+#[test]
 fn unavailable_destination_preserves_the_unsaved_body_and_does_not_create_a_note() {
     let temp = tempdir().unwrap();
     let missing_root = temp.path().join("not-created");

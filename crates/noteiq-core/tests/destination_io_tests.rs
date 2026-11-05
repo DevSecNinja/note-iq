@@ -397,6 +397,31 @@ fn closing_an_empty_note_never_deletes_a_file_owned_by_another_note() {
 }
 
 #[test]
+fn failed_empty_note_deletion_preserves_its_path_for_the_next_close_attempt() {
+    let temp = tempdir().unwrap();
+    let destination = Destination::new(temp.path().to_path_buf());
+    let mut capture = capture();
+    capture.set_body("Mine");
+    let path = save_capture(&mut capture, &destination, instant())
+        .unwrap()
+        .unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    capture.set_body("");
+
+    assert!(matches!(
+        finish_capture(&mut capture),
+        Err(DestinationError::Io(_))
+    ));
+    assert_eq!(capture.path.as_deref(), Some(path.as_path()));
+    assert!(matches!(
+        finish_capture(&mut capture),
+        Err(DestinationError::Io(_))
+    ));
+    assert_eq!(capture.path.as_deref(), Some(path.as_path()));
+}
+
+#[test]
 fn write_errors_are_classified_for_friendly_guidance_and_diagnostics() {
     let cases = [
         (

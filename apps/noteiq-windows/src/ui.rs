@@ -1051,6 +1051,7 @@ mod tests {
             entity_url: None,
             cancelled: false,
             declined: false,
+            all_day: false,
         }
     }
 
@@ -1188,6 +1189,32 @@ mod tests {
         assert!(state.capture_open);
         assert_eq!(state.meetings.len(), 2);
         assert_eq!(state.lookup_id, 4);
+    }
+
+    #[test]
+    fn new_note_keeps_a_clean_capture_when_its_retry_save_conflicts() {
+        let (window, mut state, _) = cached_window();
+        let folder = tempfile::tempdir().unwrap();
+        state.settings.destination_root = folder.path().to_path_buf();
+        state
+            .capture
+            .edit("Preserve this saved text", Instant::now());
+        save_state(&mut state);
+        let path = state.capture.capture.path.clone().expect("note saved");
+        let original_id = state.capture.capture.id;
+        let replacement = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace(&original_id.to_string(), "some-other-note");
+        std::fs::write(&path, replacement).unwrap();
+        let (sender, _receiver) = mpsc::channel();
+
+        start_new_capture_state(&window, &mut state, &sender);
+
+        assert_eq!(state.capture.capture.id, original_id);
+        assert_eq!(state.capture.capture.body, "Preserve this saved text");
+        assert!(state.capture_open);
+        assert!(state.capture.is_dirty());
+        assert_eq!(state.capture.capture.path.as_deref(), Some(path.as_path()));
     }
 
     #[test]

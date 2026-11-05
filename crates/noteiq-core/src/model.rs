@@ -110,6 +110,8 @@ pub struct Meeting {
     pub cancelled: bool,
     #[serde(default)]
     pub declined: bool,
+    #[serde(default)]
+    pub all_day: bool,
 }
 
 #[derive(Clone, Debug)]

@@ -409,6 +409,12 @@ fn collect_meetings(value: &Value, results: &mut Vec<Meeting>, incomplete: &mut 
                             .or_else(|| object.get("declined"))
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
+                        all_day: object
+                            .get("isAllDay")
+                            .or_else(|| object.get("allDay"))
+                            .or_else(|| object.get("all_day"))
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
                     });
                 } else if title.is_some() {
                     *incomplete = true;
@@ -653,6 +659,13 @@ fn parse_retrieval_meeting(
         let title = title.to_ascii_lowercase();
         title.starts_with("canceled:") || title.starts_with("cancelled:")
     });
+    let all_day = object
+        .get("isAllDay")
+        .or_else(|| object.get("allDay"))
+        .or_else(|| object.get("all_day"))
+        .or_else(|| metadata.and_then(|meeting| meeting.get("isAllDay")))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     Some(Meeting {
         id: id.to_owned(),
@@ -668,6 +681,7 @@ fn parse_retrieval_meeting(
             .map(str::to_owned),
         cancelled,
         declined,
+        all_day,
     })
 }
 

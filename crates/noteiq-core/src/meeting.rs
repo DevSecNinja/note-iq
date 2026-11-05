@@ -31,7 +31,7 @@ fn relevance(meeting: &Meeting, now: DateTime<FixedOffset>) -> Option<(Relevance
         return None;
     }
     let in_progress = start <= now && now < end;
-    if end - start >= ALL_DAY {
+    if meeting.all_day || end - start >= ALL_DAY {
         return in_progress.then_some((Relevance::AllDay, now - start));
     }
     if in_progress {
@@ -102,7 +102,7 @@ pub fn browse_meetings(candidates: &[Meeting], now: DateTime<FixedOffset>) -> Ve
 pub fn choice_label(meeting: &Meeting) -> String {
     let title = meeting.title.as_deref().unwrap_or("Untitled meeting");
     match (meeting.start, meeting.end) {
-        (Some(start), Some(end)) if end - start >= ALL_DAY => {
+        (Some(start), Some(end)) if meeting.all_day || end - start >= ALL_DAY => {
             format!("{title} · {} · all day", start.format("%d %b"))
         }
         (Some(start), Some(end)) => {

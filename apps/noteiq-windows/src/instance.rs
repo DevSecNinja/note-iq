@@ -8,15 +8,18 @@ use noteiq_core::{
     model::CaptureSource,
 };
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{Read, Write},
     sync::mpsc::{self, Receiver},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const SOCKET_NAME: &str = "noteiq-quick-capture";
 const CONNECT_ATTEMPTS: u32 = 10;
 const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(50);
+const MAX_FORWARD_MESSAGE_BYTES: u64 = 256;
+const FORWARD_READ_TIMEOUT: Duration = Duration::from_secs(2);
+const FORWARD_READ_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub enum InstanceRole {
     Primary(Receiver<CaptureSource>),
@@ -62,15 +65,38 @@ fn start_or_forward_named(
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         for connection in listener.incoming().flatten() {
-            let mut request = String::new();
-            if BufReader::new(connection).read_line(&mut request).is_ok()
-                && let Some(source) = parse_forward_message(&request)
-            {
+            if let Some(source) = read_forward_source(connection) {
                 let _ = sender.send(source);
             }
         }
     });
     Ok(InstanceRole::Primary(receiver))
+}
+
+fn read_forward_source(mut connection: Stream) -> Option<CaptureSource> {
+    connection.set_nonblocking(true).ok()?;
+    let started = Instant::now();
+    let mut request = Vec::new();
+    loop {
+        let remaining = FORWARD_READ_TIMEOUT.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return None;
+        }
+        let mut byte = [0];
+        match connection.read(&mut byte) {
+            Ok(0) => thread::sleep(FORWARD_READ_POLL_INTERVAL.min(remaining)),
+            Ok(_) if byte[0] == b'\n' => {
+                let request = std::str::from_utf8(&request).ok()?;
+                return parse_forward_message(request);
+            }
+            Ok(_) if request.len() >= MAX_FORWARD_MESSAGE_BYTES as usize => return None,
+            Ok(_) => request.push(byte[0]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(FORWARD_READ_POLL_INTERVAL.min(remaining));
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 fn forward_to_running_instance(socket_name: &str, source: CaptureSource) -> Result<(), String> {
@@ -125,5 +151,56 @@ mod tests {
                 .expect("running instance receives the request");
             assert_eq!(received, source);
         }
+    }
+
+    #[test]
+    fn incomplete_client_cannot_block_later_launches() {
+        let name = format!("noteiq-incomplete-{}", std::process::id());
+        let InstanceRole::Primary(receiver) =
+            start_or_forward_named(&name, CaptureSource::Tray).expect("primary starts")
+        else {
+            panic!("the first launch must become the primary instance");
+        };
+        let socket = name.as_str().to_ns_name::<GenericNamespaced>().unwrap();
+        let mut incomplete = Stream::connect(socket).expect("connect incomplete client");
+        incomplete.write_all(b"{").expect("write partial request");
+
+        let started = Instant::now();
+        let role = start_or_forward_named(&name, CaptureSource::Cli)
+            .expect("later launch forwards after the incomplete request times out");
+
+        assert!(matches!(role, InstanceRole::Forwarded));
+        assert_eq!(
+            receiver
+                .recv_timeout(FORWARD_READ_TIMEOUT + Duration::from_secs(2))
+                .unwrap(),
+            CaptureSource::Cli
+        );
+        assert!(started.elapsed() < FORWARD_READ_TIMEOUT + Duration::from_secs(2));
+    }
+
+    #[test]
+    fn oversized_request_is_discarded_without_blocking_later_launches() {
+        let name = format!("noteiq-oversized-{}", std::process::id());
+        let InstanceRole::Primary(receiver) =
+            start_or_forward_named(&name, CaptureSource::Tray).expect("primary starts")
+        else {
+            panic!("the first launch must become the primary instance");
+        };
+        let socket = name.as_str().to_ns_name::<GenericNamespaced>().unwrap();
+        let mut oversized = Stream::connect(socket).expect("connect oversized client");
+        oversized
+            .write_all(&vec![b'x'; MAX_FORWARD_MESSAGE_BYTES as usize + 1])
+            .expect("write oversized request");
+        drop(oversized);
+
+        let role = start_or_forward_named(&name, CaptureSource::Uri)
+            .expect("later launch forwards after discarding the oversized request");
+
+        assert!(matches!(role, InstanceRole::Forwarded));
+        assert_eq!(
+            receiver.recv_timeout(Duration::from_secs(5)).unwrap(),
+            CaptureSource::Uri
+        );
     }
 }

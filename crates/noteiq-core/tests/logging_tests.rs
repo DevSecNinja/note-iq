@@ -27,6 +27,17 @@ fn prunes_expired_logs_and_writes_new_entries() {
             .unwrap();
     }
 
+    let current_log = logs.join(format!(
+        "noteiq.log.{}",
+        chrono::Utc::now().format("%Y-%m-%d")
+    ));
+    fs::create_dir(&current_log).unwrap();
+    assert!(matches!(
+        initialize_logging(&logs),
+        Err(DiagnosticsError::Appender(_))
+    ));
+    fs::remove_dir(&current_log).unwrap();
+
     let guard = initialize_logging(&logs).unwrap();
     tracing::warn!(
         failure_class = "timed_out",

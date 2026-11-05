@@ -39,6 +39,7 @@ pub fn meeting() -> Meeting {
         entity_url: None,
         cancelled: false,
         declined: false,
+        all_day: false,
     }
 }
 

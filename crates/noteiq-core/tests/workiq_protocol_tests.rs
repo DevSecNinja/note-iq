@@ -270,6 +270,28 @@ fn parses_the_real_workiq_retrieval_format() {
 }
 
 #[test]
+fn plain_object_parser_preserves_all_day_flag_across_spring_dst() {
+    let start = "2026-03-29T00:00:00+01:00";
+    let end = "2026-03-30T00:00:00+02:00";
+    let reference = at("2026-03-29T12:00:00+02:00");
+    let response = json!({"meetings":[{
+        "id":"dst-holiday",
+        "subject":"Company holiday",
+        "start":start,
+        "end":end,
+        "isAllDay":true
+    }]});
+
+    let meetings = parse_meeting_results(&response, reference).unwrap();
+    assert_eq!(meetings.len(), 1);
+    assert!(meetings[0].all_day);
+    assert_eq!(
+        select_current_meeting(&meetings, reference, true),
+        MeetingSelection::NoMeeting
+    );
+}
+
+#[test]
 fn selects_the_only_accepted_meeting_that_is_active_now() {
     let meetings = parse_meeting_results(&retrieval_fixture(), now()).unwrap();
 

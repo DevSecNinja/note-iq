@@ -293,14 +293,19 @@ pub fn save_capture(
 
 pub fn finish_capture(capture: &mut Capture) -> Result<(), DestinationError> {
     if capture.is_empty()
-        && let Some(path) = capture.path.take()
-        && path.exists()
+        && let Some(path) = capture.path.as_ref()
     {
-        if !file_belongs_to(&path, capture.id)? {
-            capture.path = Some(path.clone());
-            return Err(DestinationError::ExternalConflict(path));
+        match fs::symlink_metadata(path) {
+            Ok(_) => {
+                if !file_belongs_to(path, capture.id)? {
+                    return Err(DestinationError::ExternalConflict(path.clone()));
+                }
+                fs::remove_file(path)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
-        fs::remove_file(path)?;
+        capture.path = None;
     }
     Ok(())
 }

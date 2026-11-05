@@ -40,6 +40,8 @@ impl AutosaveSchedule {
     /// Delays the next automatic attempt, doubling up to a cap, so a broken destination is not
     /// retried (and logged) on every timer tick. Explicit saves are never throttled.
     pub fn failed(&mut self, now: Instant) {
+        self.first_unsaved_change.get_or_insert(now);
+        self.last_change.get_or_insert(now);
         let delay = RETRY_BACKOFF_START
             .saturating_mul(1 << self.consecutive_failures.min(6))
             .min(RETRY_BACKOFF_MAX);
