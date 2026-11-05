@@ -18,6 +18,9 @@ jobs:
     name: Build (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
     strategy:
       fail-fast: false
       matrix:
