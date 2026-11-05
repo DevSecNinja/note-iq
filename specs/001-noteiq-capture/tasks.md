@@ -195,6 +195,7 @@ correlation IDs while asserting note bodies and meeting values are absent.
 - [x] T084 Validate local x64-under-emulation, ARM64, and WSL Clippy/tests/builds; verify PE machine values `8664`/`AA64`; pass `yamlfmt -lint`, `yamllint`, `actionlint`, and `zizmor --offline`; scan source with Gitleaks; exercise offline packaging with both real binaries and verify ZIP contents, architecture IDs, SHA-256 values, and tag/ref/published-release guard rejection cases.
 - [x] T085 Run `yamlfmt -lint` and `yamllint` against the workflow/configuration YAML and resolve findings.
 - [ ] T086 After Release Please App/repository permissions are configured, run hosted CI and validate a tag-bound release retry end to end; no remote run is claimed until authorized.
+
 ## Dependencies and Execution Order
 
 ### Phase dependencies

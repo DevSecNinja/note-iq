@@ -21,6 +21,7 @@ the Scout installation and is never installed or copied.
 installation is in progress).
 
 **Primary Dependencies**:
+
 - `slint` / `slint-build` 1.18 for compiled declarative UI.
 - `global-hotkey` 0.9 and `tray-icon` for the native Windows shortcut/tray.
 - `interprocess` 2.2 for single-instance focus/new-note signaling.

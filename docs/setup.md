@@ -113,11 +113,11 @@ up to one minute, so the log is not flooded; **Save** or `Ctrl+S` retries at onc
 The **Note filename** setting names each note. The default,
 `{date}_{time}_{title}`, gives names such as `2026-11-03_1415_project-review.md`.
 
-| Placeholder | Becomes |
-|---|---|
-| `{date}` | The capture's local date, `YYYY-MM-DD` |
-| `{time}` | The capture's local time, `HHmm` |
-| `{title}` | A safe slug of the attached meeting's name, else of the note's first non-empty line |
+| Placeholder | Becomes                                                                             |
+| ----------- | ----------------------------------------------------------------------------------- |
+| `{date}`    | The capture's local date, `YYYY-MM-DD`                                              |
+| `{time}`    | The capture's local time, `HHmm`                                                    |
+| `{title}`   | A safe slug of the attached meeting's name, else of the note's first non-empty line |
 
 The `.md` extension is added automatically. **Use date–title style** fills in
 `{date}-{title}`, the naming used by the vault's own captures, and **Use default
@@ -347,19 +347,19 @@ automatic connection off keeps the meeting that is already attached.
 
 The hint under the list explains the current state:
 
-| Hint | Meaning |
-|---|---|
-| Checking your calendar… | A lookup is running; cached meetings stay usable and **Refresh** waits |
-| Connected automatically · in progress | It is the only meeting in progress; "· ended" once it is over |
-| Selected for this note | You chose this meeting |
-| No meeting attached to this note | You chose **No meeting** |
-| 2 meetings in progress — choose one | Meetings overlap, so none was attached |
-| 1 meeting in progress — choose it to attach | It began more than 15 minutes after you started this note |
-| No meeting in progress | No timed meeting is happening right now |
-| No meetings found. You can keep writing. | The lookup returned no meetings to list |
-| Automatic meeting connection is off | The setting is off; choose a meeting yourself |
-| Meeting lookup unavailable. WorkIQ comes with Scout. | Scout's WorkIQ executable was not found |
-| Couldn't refresh meetings. Showing earlier results. | The lookup failed; earlier results remain |
+| Hint                                                 | Meaning                                                                |
+| ---------------------------------------------------- | ---------------------------------------------------------------------- |
+| Checking your calendar…                              | A lookup is running; cached meetings stay usable and **Refresh** waits |
+| Connected automatically · in progress                | It is the only meeting in progress; "· ended" once it is over          |
+| Selected for this note                               | You chose this meeting                                                 |
+| No meeting attached to this note                     | You chose **No meeting**                                               |
+| 2 meetings in progress — choose one                  | Meetings overlap, so none was attached                                 |
+| 1 meeting in progress — choose it to attach          | It began more than 15 minutes after you started this note              |
+| No meeting in progress                               | No timed meeting is happening right now                                |
+| No meetings found. You can keep writing.             | The lookup returned no meetings to list                                |
+| Automatic meeting connection is off                  | The setting is off; choose a meeting yourself                          |
+| Meeting lookup unavailable. WorkIQ comes with Scout. | Scout's WorkIQ executable was not found                                |
+| Couldn't refresh meetings. Showing earlier results.  | The lookup failed; earlier results remain                              |
 
 Other lookup problems, such as needing to sign in to Scout, are explained in
 the same place. Save progress and save errors appear in the footer instead.

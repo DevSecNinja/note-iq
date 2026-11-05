@@ -19,3 +19,4 @@ exclude:
   - apm.yml
   - apm.lock.yaml
   - apm_modules/**
+  - .specify/workflows/**

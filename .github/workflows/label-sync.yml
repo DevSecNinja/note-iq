@@ -18,6 +18,8 @@ permissions:
 jobs:
   label-sync:
     uses: DevSecNinja/.github/.github/workflows/label-sync.yml@0d0f448de257f354c89dc3a128871235d6ba8c11 # v2.5.0
+    with:
+      delete-other-labels: false
     permissions:
       contents: read
       issues: write

@@ -10,7 +10,7 @@
 tray and shortcut launch, automatic OneDrive vault storage, optional meeting
 context, autosave, no-meeting disconnect, and friendly recovery."
 
-## User Scenarios & Testing *(mandatory)*
+## User Scenarios & Testing _(mandatory)_
 
 ### User Story 1 - Capture and keep a quick note (Priority: P1)
 
@@ -267,7 +267,7 @@ existing Release Please draft is published without creating a second release.
 - Calendar titles containing Markdown or HTML display literally and cannot hide
   or restructure the generated note.
 
-## Requirements *(mandatory)*
+## Requirements _(mandatory)_
 
 ### Functional Requirements
 
@@ -413,7 +413,7 @@ existing Release Please draft is published without creating a second release.
 - **Integration state**: WorkIQ discovery, availability, authentication, and
   error state that remains independent of editor usability.
 
-## Success Criteria *(mandatory)*
+## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes
 

@@ -6,23 +6,27 @@ Added sections: additional constraints; development workflow
 Removed sections: none
 Follow-up TODOs: none
 -->
+
 # NoteIQ Constitution
 
 ## Core Principles
 
 ### I. Capture Must Be Immediate and Reliable
+
 Opening a capture MUST place the cursor in a plain-text Markdown editor without
 requiring a title or metadata form. Saving MUST preserve user text and explicit
 context; closing an empty capture MUST remove its empty file without deleting it
 while the user is still editing.
 
 ### II. User Data Stays Under User Control
+
 Each note MUST be written to exactly one selected destination. A failed write
 MUST remain visible and MUST NOT silently fall back, duplicate, or claim success.
 File replacement and empty-note cleanup MUST avoid losing newer edits or
 overwriting an unrelated note.
 
 ### III. Observable Behavior Is Testable
+
 Platform-independent behavior MUST be tested independently of Windows UI and
 live Microsoft 365 services. Meeting changes, especially choosing No meeting,
 MUST have regression tests that inspect the resulting saved Markdown. Failures
@@ -30,6 +34,7 @@ MUST be actionable to the user and diagnosable without logging note content or
 private meeting data.
 
 ### IV. Integrations Are Optional and Explicit
+
 The note editor and file saving MUST work when Scout, WorkIQ, authentication,
 network access, or calendar context is unavailable. Meeting lookup MUST use the
 documented local integration, validate discovered capabilities and returned
@@ -37,6 +42,7 @@ data, and distinguish lookup failure from no matching meeting. User disconnect
 or meeting selection MUST take precedence over a delayed lookup result.
 
 ### V. Keep the Capture Surface Focused
+
 The capture window MUST remain keyboard-first, accessible, and limited to
 features that reduce interruption. Plain Markdown is the editing format.
 Generated context MUST remain separate from user-editable note text, and

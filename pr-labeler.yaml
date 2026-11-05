@@ -2,7 +2,7 @@
 area/apps:
   - changed-files:
       - any-glob-to-any-file:
-          - services/**/*
+          - apps/**/*
 
 area/docs:
   - changed-files:
