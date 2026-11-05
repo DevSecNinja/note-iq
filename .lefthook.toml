@@ -1,0 +1,2 @@
+[pre-commit.commands.cargo-fmt]
+run = "cargo fmt --all -- --check"

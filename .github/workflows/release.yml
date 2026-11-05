@@ -1,0 +1,148 @@
+---
+name: Release
+
+# Local: release-publish creates a release, but Release Please already created
+# our draft. Upload/attest before publication so immutable releases work.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Release Please draft tag to retry (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.source.outputs.tag }}
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Harden runner
+        uses: DevSecNinja/.github/actions/harden-runner@24acc67adf1be33089e73b2fdbdb4be8c12d145b # v3.2.0
+      - name: Check out release refs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve draft tag and version
+        id: source
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          WORKFLOW_REF: ${{ github.ref }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Expected a stable vX.Y.Z tag"; exit 1;
+          }
+          [[ "$WORKFLOW_REF" == "refs/tags/$RELEASE_TAG" ]] || {
+            echo "::error::Run this workflow on the requested tag (--ref vX.Y.Z) so provenance names the release source"; exit 1;
+          }
+          sha=$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")
+          git merge-base --is-ancestor "$sha" origin/main
+          git show "$sha:Cargo.toml" > "$RUNNER_TEMP/release-Cargo.toml"
+          python3 - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(
+              (Path(os.environ["RUNNER_TEMP"]) / "release-Cargo.toml").read_text()
+          )["workspace"]["package"]["version"]
+          if "v" + version != os.environ["RELEASE_TAG"]:
+              raise SystemExit("Tag does not match the workspace version")
+          PY
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+  validate-and-build:
+    needs: prepare
+    # actionlint 1.7.12 rejects $/ calls; keep commit-bound workflow reuse until its pin supports them.
+    uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+    with:
+      source-ref: ${{ needs.prepare.outputs.sha }}
+
+  publish:
+    needs:
+      - prepare
+      - validate-and-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Harden runner
+        uses: DevSecNinja/.github/actions/harden-runner@24acc67adf1be33089e73b2fdbdb4be8c12d145b # v3.2.0
+      - name: Check out release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - name: Download architecture artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: noteiq-windows-*
+          path: artifacts
+          digest-mismatch: error
+      - name: Package releases and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, os, zipfile
+          from pathlib import Path
+          output = Path("dist")
+          output.mkdir()
+          checksums = []
+          for arch in ("x64", "arm64"):
+              archive = output / f"noteiq-{os.environ['RELEASE_TAG']}-windows-{arch}.zip"
+              with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+                  bundle.write(Path("artifacts") / f"noteiq-windows-{arch}" / "noteiq.exe", "noteiq.exe")
+                  for name in ("README.md", "LICENSE"):
+                      bundle.write(name, name)
+              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+              checksums.append(f"{digest}  {archive.name}\n")
+          (output / "SHA256SUMS.txt").write_text("".join(checksums), encoding="utf-8")
+          PY
+      - name: Attest distribution files
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+      - name: Upload and publish the draft
+        shell: bash
+        run: |-
+          set -euo pipefail
+          draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)
+          [[ "$draft" == true ]] || {
+            echo "::error::Refusing to modify a published release"; exit 1;
+          }
+          gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/release-notes.md"
+          cat >> "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+
+          ## Windows downloads
+
+          Choose `windows-x64` for Intel/AMD or `windows-arm64` for Windows on ARM.
+          Verify the ZIP against `SHA256SUMS.txt` and its GitHub attestation:
+          `gh attestation verify <downloaded-zip> --repo DevSecNinja/note-iq`.
+          These portable executables are not code-signed; Windows may show SmartScreen warnings.
+          NOTES
+          gh release upload "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS.txt --clobber
+          gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false

@@ -1,0 +1,72 @@
+---
+name: Build Windows
+
+# Local reusable workflow: central CI does not yet support Rust/Slint binaries.
+on:
+  workflow_call:
+    inputs:
+      source-ref:
+        description: Exact commit to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            machine: "8664"
+          - arch: arm64
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            machine: AA64
+    env:
+      RUST_TARGET: ${{ matrix.target }}
+      EXPECTED_MACHINE: ${{ matrix.machine }}
+    steps:
+      - name: Harden runner
+        uses: DevSecNinja/.github/actions/harden-runner@24acc67adf1be33089e73b2fdbdb4be8c12d145b # v3.2.0
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-ref }}
+          persist-credentials: false
+      - name: Install Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup target add $env:RUST_TARGET
+      - name: Build release
+        run: cargo build --release --features desktop -p noteiq-windows --locked --target $env:RUST_TARGET
+      - name: Verify executable architecture
+        shell: pwsh
+        run: |
+          $bytes = [IO.File]::ReadAllBytes("target\$env:RUST_TARGET\release\noteiq.exe")
+          if ([BitConverter]::ToUInt16($bytes, 0) -ne 0x5A4D) { throw 'Missing MZ header' }
+          $offset = [BitConverter]::ToInt32($bytes, 0x3c)
+          if ([BitConverter]::ToUInt32($bytes, $offset) -ne 0x4550) { throw 'Missing PE header' }
+          $machine = [BitConverter]::ToUInt16($bytes, $offset + 4)
+          $expected = [Convert]::ToUInt16($env:EXPECTED_MACHINE, 16)
+          if ($machine -ne $expected) { throw 'Executable architecture does not match artifact' }
+          Write-Output "Verified PE machine: $($machine.ToString('X4'))"
+      - name: Upload executable
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: noteiq-windows-${{ matrix.arch }}
+          path: target/${{ matrix.target }}/release/noteiq.exe
+          if-no-files-found: error
+          retention-days: 7

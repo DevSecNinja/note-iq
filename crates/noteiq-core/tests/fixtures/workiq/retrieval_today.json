@@ -1,0 +1,79 @@
+{
+  "content": [],
+  "structuredContent": {
+    "application/vnd.ms-workiq.retrieval": {
+      "results": [
+        {
+          "markdown": "- **Morning standup**\n  - **time:** today at 8 AM to today at 8:15 AM\n  - **timeUntilMeeting:** event is in the past\n  - **recurrenceInformation:** Not a recurring event\n  - **organizer:** {\"reference\\_id\":\"turn1search1\",\"type\":\"People\",\"displayName\":\"\\\\u003cperson\\\\u003eOrganizer Name\\\\u003c/person\\\\u003e\",\"emailAddresses\":\"\\[{\\\\u0022address\\\\u0022:\\\\u0022organizer@example.test\\\\u0022}\\]\"}\n  - **numberOfInvitees:** 0\n  - **additionalMetadata:** \\[{\"key\":\"Meeting Duration\",\"value\":\"30 minutes\"},{\"key\":\"RSVP Info\",\"value\":\"Your response: Meeting Organizer\"},{\"key\":\"Sensitivity\",\"value\":\"Normal\"}\\]",
+          "id": "h1",
+          "resourceId": "AAMkAGFakeEventId01AAA=",
+          "webUrl": "https://teams.example.test/l/meeting/details?eventId=fake",
+          "entityUrl": "/me/events/AAMkAGFakeEventId01AAA%3D",
+          "entityType": "Meetings",
+          "contentProtection": "allowed",
+          "resourceMetadata": {
+            "meeting": {
+              "title": "<title>Morning standup</title>",
+              "startTime": "11/3/2026"
+            }
+          }
+        },
+        {
+          "markdown": "- **Project review &amp; planning**\n  - **time:** today at 1 PM to today at 1:30 PM\n  - **timeUntilMeeting:** event is in progress\n  - **recurrenceInformation:** Not a recurring event\n  - **organizer:** {\"reference\\_id\":\"turn1search1\",\"type\":\"People\",\"displayName\":\"\\\\u003cperson\\\\u003eOrganizer Name\\\\u003c/person\\\\u003e\",\"emailAddresses\":\"\\[{\\\\u0022address\\\\u0022:\\\\u0022organizer@example.test\\\\u0022}\\]\"}\n  - **numberOfInvitees:** 2\n  - **invitees:** \\[{\"reference\\_id\":\"turn1search2\",\"type\":\"Required\",\"emailAddress\":{\"name\":\"\\\\u003cperson\\\\u003eAttendee One\\\\u003c/person\\\\u003e\",\"address\":\"one@example.test\"}},{\"reference\\_id\":\"turn1search3\",\"type\":\"Optional\",\"emailAddress\":{\"name\":\"\\\\u003cperson\\\\u003eAttendee Two\\\\u003c/person\\\\u003e\",\"address\":\"two@example.test\"}}\\]\n  - **additionalMetadata:** \\[{\"key\":\"Meeting Duration\",\"value\":\"30 minutes\"},{\"key\":\"RSVP Info\",\"value\":\"Your response: Accepted\"},{\"key\":\"Sensitivity\",\"value\":\"Normal\"}\\]",
+          "id": "h2",
+          "resourceId": "AAMkAGFakeEventId02AAA=",
+          "webUrl": "https://teams.example.test/l/meeting/details?eventId=fake",
+          "entityUrl": "/me/events/AAMkAGFakeEventId02AAA%3D",
+          "entityType": "Meetings",
+          "contentProtection": "allowed",
+          "resourceMetadata": {
+            "meeting": {
+              "title": "<title>Project review &amp; planning</title>",
+              "startTime": "11/3/2026"
+            }
+          }
+        },
+        {
+          "markdown": "- **Town hall**\n  - **time:** today at 1 PM to today at 2 PM\n  - **timeUntilMeeting:** event is in progress\n  - **recurrenceInformation:** Not a recurring event\n  - **organizer:** {\"reference\\_id\":\"turn1search1\",\"type\":\"People\",\"displayName\":\"\\\\u003cperson\\\\u003eOrganizer Name\\\\u003c/person\\\\u003e\",\"emailAddresses\":\"\\[{\\\\u0022address\\\\u0022:\\\\u0022organizer@example.test\\\\u0022}\\]\"}\n  - **numberOfInvitees:** 0\n  - **additionalMetadata:** \\[{\"key\":\"Meeting Duration\",\"value\":\"30 minutes\"},{\"key\":\"RSVP Info\",\"value\":\"Your response: Declined\"},{\"key\":\"Sensitivity\",\"value\":\"Normal\"}\\]",
+          "id": "h3",
+          "resourceId": "AAMkAGFakeEventId03AAA=",
+          "webUrl": "https://teams.example.test/l/meeting/details?eventId=fake",
+          "entityUrl": "/me/events/AAMkAGFakeEventId03AAA%3D",
+          "entityType": "Meetings",
+          "contentProtection": "allowed",
+          "resourceMetadata": {
+            "meeting": {
+              "title": "<title>Town hall</title>",
+              "startTime": "11/3/2026"
+            }
+          }
+        },
+        {
+          "markdown": "- **Quarterly planning**\n  - **time:** All day\n  - **timeUntilMeeting:** event is in the past\n  - **recurrenceInformation:** Not a recurring event\n  - **organizer:** {\"reference\\_id\":\"turn1search1\",\"type\":\"People\",\"displayName\":\"\\\\u003cperson\\\\u003eOrganizer Name\\\\u003c/person\\\\u003e\",\"emailAddresses\":\"\\[{\\\\u0022address\\\\u0022:\\\\u0022organizer@example.test\\\\u0022}\\]\"}\n  - **numberOfInvitees:** 0\n  - **additionalMetadata:** \\[{\"key\":\"Meeting Duration\",\"value\":\"30 minutes\"},{\"key\":\"RSVP Info\",\"value\":\"Your response: Tentative\"},{\"key\":\"Sensitivity\",\"value\":\"Normal\"}\\]",
+          "id": "h4",
+          "resourceId": "AAMkAGFakeEventId04AAA=",
+          "webUrl": "https://teams.example.test/l/meeting/details?eventId=fake",
+          "entityUrl": "/me/events/AAMkAGFakeEventId04AAA%3D",
+          "entityType": "Meetings",
+          "contentProtection": "allowed",
+          "resourceMetadata": {
+            "meeting": {
+              "title": "<title>Quarterly planning</title>",
+              "startTime": "11/3/2026"
+            }
+          }
+        }
+      ],
+      "resultCount": 4,
+      "searchMetadata": {
+        "types": [
+          "Event"
+        ],
+        "totalResults": "4",
+        "searchTerms": []
+      },
+      "stoppedReason": "completed"
+    }
+  },
+  "isError": false
+}

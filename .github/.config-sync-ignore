@@ -1,0 +1,6 @@
+# Repository-specific formatter scope, labeler rules and secret-scan defaults.
+.yamlfmt.yaml
+dprint.json
+issue-labeler.yaml
+pr-labeler.yaml
+.gitleaks.toml
