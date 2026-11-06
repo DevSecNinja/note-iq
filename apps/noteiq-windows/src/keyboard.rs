@@ -26,6 +26,41 @@ fn composed_text<'a>(logical_key: &Key, text: Option<&'a str>) -> Option<&'a str
     }
 }
 
+impl ComposedTextInput {
+    fn dispatch_input(
+        &mut self,
+        key: (WindowId, PhysicalKey),
+        state: ElementState,
+        logical_key: &Key,
+        text: Option<&str>,
+        repeat: bool,
+        dispatch: impl FnOnce(WindowEvent),
+    ) -> EventResult {
+        let translated = match state {
+            ElementState::Pressed => {
+                let Some(text) = composed_text(logical_key, text) else {
+                    return EventResult::Propagate;
+                };
+                let text: SharedString = text.into();
+                self.pressed.insert(key, text.clone());
+                if repeat {
+                    WindowEvent::KeyPressRepeated { text }
+                } else {
+                    WindowEvent::KeyPressed { text }
+                }
+            }
+            ElementState::Released => {
+                let Some(text) = self.pressed.remove(&key) else {
+                    return EventResult::Propagate;
+                };
+                WindowEvent::KeyReleased { text }
+            }
+        };
+        dispatch(translated);
+        EventResult::PreventDefault
+    }
+}
+
 impl CustomApplicationHandler for ComposedTextInput {
     fn window_event(
         &mut self,
@@ -49,35 +84,87 @@ impl CustomApplicationHandler for ComposedTextInput {
         let Some(window) = window else {
             return EventResult::Propagate;
         };
-        let key = (window_id, event.physical_key);
-        let translated = match event.state {
-            ElementState::Pressed => {
-                let Some(text) = composed_text(&event.logical_key, event.text.as_deref()) else {
-                    return EventResult::Propagate;
-                };
-                let text: SharedString = text.into();
-                self.pressed.insert(key, text.clone());
-                if event.repeat {
-                    WindowEvent::KeyPressRepeated { text }
-                } else {
-                    WindowEvent::KeyPressed { text }
-                }
-            }
-            ElementState::Released => {
-                let Some(text) = self.pressed.remove(&key) else {
-                    return EventResult::Propagate;
-                };
-                WindowEvent::KeyReleased { text }
-            }
-        };
-        window.dispatch_event(translated);
-        EventResult::PreventDefault
+        self.dispatch_input(
+            (window_id, event.physical_key),
+            event.state,
+            &event.logical_key,
+            event.text.as_deref(),
+            event.repeat,
+            |translated| window.dispatch_event(translated),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winit::keyboard::KeyCode;
+
+    #[test]
+    fn translated_presses_repeats_and_matching_releases_prevent_default_handling() {
+        for (logical, code, translated) in [
+            (Key::Named(NamedKey::Space), KeyCode::Space, "'"),
+            (Key::Character("x".into()), KeyCode::KeyX, "'x"),
+        ] {
+            let mut handler = ComposedTextInput::default();
+            let key = (WindowId::from(1_u64), PhysicalKey::Code(code));
+            for repeat in [false, true] {
+                let result = handler.dispatch_input(
+                    key,
+                    ElementState::Pressed,
+                    &logical,
+                    Some(translated),
+                    repeat,
+                    |event| match event {
+                        WindowEvent::KeyPressed { text } if !repeat => {
+                            assert_eq!(text.as_str(), translated);
+                        }
+                        WindowEvent::KeyPressRepeated { text } if repeat => {
+                            assert_eq!(text.as_str(), translated);
+                        }
+                        _ => panic!("unexpected translated press"),
+                    },
+                );
+                assert!(matches!(result, EventResult::PreventDefault));
+            }
+            let result = handler.dispatch_input(
+                key,
+                ElementState::Released,
+                &logical,
+                None,
+                false,
+                |event| match event {
+                    WindowEvent::KeyReleased { text } => assert_eq!(text.as_str(), translated),
+                    _ => panic!("unexpected translated release"),
+                },
+            );
+            assert!(matches!(result, EventResult::PreventDefault));
+            assert!(handler.pressed.is_empty());
+            let result =
+                handler.dispatch_input(key, ElementState::Released, &logical, None, false, |_| {
+                    panic!("unmatched release must not dispatch")
+                });
+            assert!(matches!(result, EventResult::Propagate));
+        }
+    }
+
+    #[test]
+    fn ordinary_input_propagates_without_dispatching_or_tracking() {
+        let mut handler = ComposedTextInput::default();
+        let key = (WindowId::from(1_u64), PhysicalKey::Code(KeyCode::Space));
+        for state in [ElementState::Pressed, ElementState::Released] {
+            let result = handler.dispatch_input(
+                key,
+                state,
+                &Key::Named(NamedKey::Space),
+                Some(" "),
+                false,
+                |_| panic!("ordinary input must stay with Slint"),
+            );
+            assert!(matches!(result, EventResult::Propagate));
+            assert!(handler.pressed.is_empty());
+        }
+    }
 
     #[test]
     fn keeps_literal_dead_key_output_instead_of_the_logical_key() {
