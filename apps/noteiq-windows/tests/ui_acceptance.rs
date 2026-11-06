@@ -399,6 +399,92 @@ fn meeting_change_confirmation_offers_change_new_and_cancel_actions() {
 }
 
 #[test]
+fn meeting_change_confirmation_blocks_pointer_input_behind_the_dialog() {
+    let window = open_window();
+    show_meetings(&window, &[STANDUP, REVIEW], 1);
+    let choices = record_meeting_choices(&window);
+    window.set_meeting_change_confirmation_visible(true);
+    settle();
+
+    picker(&window).mock_single_click(PointerEventButton::Left);
+    settle();
+
+    assert!(choices.borrow().is_empty());
+    assert!(
+        find(&window, REVIEW, AccessibleRole::ListItem).is_none(),
+        "the meeting picker must not open behind the confirmation"
+    );
+    assert!(shows_text(
+        &window,
+        "You are about to change the meeting for this note. Do you want to change it or create a new note?"
+    ));
+}
+
+#[test]
+fn meeting_change_confirmation_supports_escape_and_traps_tab_focus() {
+    let window = open_window();
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let action_sink = actions.clone();
+    window.on_meeting_change_confirmed(move |action| {
+        action_sink.borrow_mut().push(action);
+    });
+    let cancellations = counter();
+    let weak_window = window.as_weak();
+    let cancellation_sink = cancellations.clone();
+    window.on_meeting_change_cancelled(move || {
+        cancellation_sink.set(cancellation_sink.get() + 1);
+        if let Some(window) = weak_window.upgrade() {
+            window.set_meeting_change_confirmation_visible(false);
+        }
+    });
+
+    window.set_meeting_change_confirmation_visible(true);
+    settle();
+    key(&window, Key::Return.into());
+    settle();
+    assert_eq!(
+        cancellations.get(),
+        1,
+        "opening the dialog should focus Cancel"
+    );
+
+    window.set_meeting_change_confirmation_visible(true);
+    settle();
+    key(&window, Key::Tab.into());
+    key(&window, Key::Return.into());
+    settle();
+    assert_eq!(
+        *actions.borrow(),
+        vec![0],
+        "Tab from Cancel should focus Change meeting"
+    );
+
+    window.set_meeting_change_confirmation_visible(false);
+    settle();
+    window.set_meeting_change_confirmation_visible(true);
+    settle();
+    key(&window, Key::Tab.into());
+    key(&window, Key::Tab.into());
+    key(&window, Key::Tab.into());
+    key(&window, Key::Return.into());
+    settle();
+    assert_eq!(
+        cancellations.get(),
+        2,
+        "Tab from the last action should wrap focus to Cancel"
+    );
+    assert!(!window.get_meeting_change_confirmation_visible());
+
+    window.set_meeting_change_confirmation_visible(true);
+    settle();
+    key(&window, Key::Escape.into());
+    settle();
+
+    assert_eq!(cancellations.get(), 3);
+    assert!(!window.get_meeting_change_confirmation_visible());
+}
+
+#[test]
 fn starting_a_new_note_clears_text_typed_into_the_editor() {
     let window = open_window();
     let edits = record_edits(&window);

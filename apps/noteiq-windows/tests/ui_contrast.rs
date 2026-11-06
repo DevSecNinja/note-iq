@@ -3,6 +3,7 @@
 const MAIN_WINDOW: &str = include_str!("../ui/main.slint");
 const APP_ICON: &str = include_str!("../assets/noteiq.svg");
 const BADGE_BACKGROUND: &str = "#4f46e5";
+const MODAL_SCRIM_BACKGROUND: &str = "#20232a";
 const AA_NORMAL_TEXT: f64 = 4.5;
 
 fn hex_tokens(line: &str) -> Vec<&str> {
@@ -66,7 +67,8 @@ fn every_text_colour_meets_aa_on_every_surface() {
     let text = colours("color");
     let surfaces: Vec<String> = colours("background")
         .into_iter()
-        .filter(|colour| colour != BADGE_BACKGROUND)
+        // A translucent scrim is an overlay, not an opaque text surface.
+        .filter(|colour| colour != BADGE_BACKGROUND && colour != MODAL_SCRIM_BACKGROUND)
         .collect();
     assert!(
         text.len() >= 5,
