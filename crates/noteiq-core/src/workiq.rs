@@ -364,10 +364,23 @@ fn enrich_meeting_details(process: &mut McpProcess, meetings: &mut [Meeting], ti
                 );
                 continue;
             };
-            if let Some(meeting) = meetings.iter_mut().find(|meeting| {
-                details.get("id").and_then(Value::as_str) == Some(meeting.id.as_str())
-            }) {
-                apply_meeting_details(meeting, details);
+            let start = details.get("start").and_then(parse_timestamp);
+            let matches = meetings
+                .iter()
+                .enumerate()
+                .filter(|(_, meeting)| {
+                    details.get("id").and_then(Value::as_str) == Some(meeting.id.as_str())
+                        && start.is_none_or(|start| meeting.start == Some(start))
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            if let [index] = matches.as_slice() {
+                apply_meeting_details(&mut meetings[*index], details);
+            } else if matches.len() > 1 {
+                tracing::warn!(
+                    failure_class = "ambiguous_occurrence_details",
+                    "Calendar details did not identify a unique occurrence"
+                );
             }
         }
     }
@@ -499,7 +512,8 @@ pub fn parse_meeting_results(
         return Err(WorkiqError::InvalidResponse);
     }
     meetings.sort_by_key(|left| left.start);
-    meetings.dedup_by(|left, right| left.id == right.id);
+    let mut seen = HashSet::new();
+    meetings.retain(|meeting| seen.insert((meeting.id.clone(), meeting.start)));
     Ok(meetings)
 }
 
@@ -1186,7 +1200,7 @@ impl WorkiqClient {
                     meetings.extend(
                         found
                             .into_iter()
-                            .filter(|meeting| seen.insert(meeting.id.clone())),
+                            .filter(|meeting| seen.insert((meeting.id.clone(), meeting.start))),
                     );
                 }
                 Err(error) => {

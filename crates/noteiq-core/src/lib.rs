@@ -7,5 +7,6 @@ pub mod markdown;
 pub mod meeting;
 pub mod model;
 pub mod note_filename;
+pub mod saved_note;
 pub mod settings;
 pub mod workiq;

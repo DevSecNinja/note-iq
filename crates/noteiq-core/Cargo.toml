@@ -19,9 +19,7 @@ tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 tempfile = "3"
+yaml-rust2 = "0.13.0"
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-yaml-rust2 = "0.13.0"

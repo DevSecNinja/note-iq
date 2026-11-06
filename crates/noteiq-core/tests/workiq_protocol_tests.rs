@@ -66,6 +66,20 @@ fn parse_single_range(
 }
 
 #[test]
+fn repeated_calendar_ids_keep_distinct_occurrences_but_deduplicate_the_same_instant() {
+    let first = json!({"id": "series", "subject": "Weekly planning",
+        "start": "2026-11-03T13:00:00Z", "end": "2026-11-03T13:30:00Z"});
+    let second = json!({"id": "series", "subject": "Weekly planning",
+        "start": "2026-11-04T13:00:00Z", "end": "2026-11-04T13:30:00Z"});
+    let equivalent = json!({"id": "series", "subject": "Weekly planning",
+        "start": "2026-11-03T14:00:00+01:00", "end": "2026-11-03T14:30:00+01:00"});
+    let meetings = parse_meeting_results(&json!([first, second, equivalent]), now()).unwrap();
+    assert_eq!(meetings.len(), 2);
+    assert_eq!(meetings[0].id, meetings[1].id);
+    assert_ne!(meetings[0].start, meetings[1].start);
+}
+
+#[test]
 fn discovers_the_scoped_meeting_retrieval_tool_from_runtime_schema() {
     let schema = json!({
         "result": {

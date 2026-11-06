@@ -143,7 +143,11 @@ pub fn render_markdown(
     if !capture.body.is_empty() && !capture.body.ends_with('\n') {
         output.push('\n');
     }
-    Ok(output)
+    Ok(if capture.restored_document.is_some() {
+        crate::saved_note::render_restored(capture, &output)
+    } else {
+        output
+    })
 }
 
 fn yaml_string(value: &str) -> Result<String, MarkdownError> {
