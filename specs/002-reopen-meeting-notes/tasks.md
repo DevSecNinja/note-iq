@@ -60,3 +60,15 @@ then combined in the same runner. Caption regression and documentation are indep
 Implement restoration and preservation as one safe MVP; then wire background
 selection and exercise all persistence failures before claiming completion.
 No commit, deployment or runtime restart is included.
+
+## Phase 7: US4 - Confirm meeting changes on saved notes
+
+**Goal**: Prevent a saved note's text from being silently carried to a different meeting.
+**Independent test**: Change the meeting on a saved capture, start a fresh capture for a different meeting, and cancel the prompt; verify each path preserves its intended note and meeting.
+
+- [x] T014 [US4] Add controller regressions for changing, creating and cancelling a meeting switch in apps/noteiq-windows/src/ui.rs
+- [x] T015 [US4] Add an accessible confirmation overlay and connect its actions in apps/noteiq-windows/ui/main.slint and apps/noteiq-windows/src/ui.rs
+- [x] T016 [US4] Document the saved-note meeting-change confirmation in docs/setup.md
+- [x] T017 Run focused controller/UI tests, formatting and lint checks per specs/002-reopen-meeting-notes/quickstart.md
+
+**Dependencies**: T014 -> T015 -> T016 -> T017.

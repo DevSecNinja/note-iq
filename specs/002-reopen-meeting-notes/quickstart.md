@@ -24,5 +24,10 @@ original file/text opens and the previous draft remains saved. Add Summary and
 custom properties externally, reopen and append, then verify preservation.
 Externally modify a reopened file again and verify saving reports a conflict.
 Select No meeting and verify persisted meeting properties disappear.
+From a saved meeting note, select a different meeting and verify the
+confirmation keeps the same note when changing its meeting, saves the old note
+and opens a blank capture when creating a new note, and leaves the original
+selection and text unchanged when cancelled. Make the save fail before choosing
+new note and verify the current note remains open.
 
 No live WorkIQ account or actual vault data is required for automated tests.
