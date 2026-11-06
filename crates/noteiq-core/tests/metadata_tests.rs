@@ -202,7 +202,7 @@ fn every_fixture_has_parseable_front_matter_with_the_original_values() {
         );
         assert_eq!(text("timezone"), Some("Europe/Amsterdam"), "{name}");
         assert_eq!(text("captured_via"), Some("shortcut"), "{name}");
-        assert_eq!(properties["noteiq_schema"].as_i64(), Some(3), "{name}");
+        assert_eq!(properties["noteiq_schema"].as_i64(), Some(4), "{name}");
     }
 
     let meeting_note = front_matter(&fixture("meeting.md"));

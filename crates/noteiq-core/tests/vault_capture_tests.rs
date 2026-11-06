@@ -155,8 +155,8 @@ fn body_sections_follow_the_vault_capture_template_order() {
         "\n---\n\n# Project review\n\n",
         "**From:** [[Alex Example]] · **Captured:** 2026-11-03 14:15\n\n<!-- Captured with NoteIQ.",
         "\n## Meeting details\n\n- **When:** ",
-        "\n## Summary\n\n## Follow-ups\n\n---\n\n<details>\n<summary>Raw capture (frozen — evidence, non-AI)</summary>\n",
-        "\n\nTyped text\n\n</details>\n",
+        "\n## Summary\n\n## Follow-ups\n\n---\n\n## Notes\n",
+        "\nTyped text\n",
     ];
     let mut position = 0;
     for section in sections {
@@ -165,7 +165,11 @@ fn body_sections_follow_the_vault_capture_template_order() {
             .unwrap_or_else(|| panic!("{section:?} follows the previous section"));
         position += found + section.len();
     }
-    assert_eq!(position, note.len(), "the raw capture block ends the note");
+    assert_eq!(
+        position,
+        note.len(),
+        "the editable Notes section ends the note"
+    );
 }
 
 #[test]

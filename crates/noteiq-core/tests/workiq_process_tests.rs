@@ -18,6 +18,88 @@ fn reports_a_missing_executable_without_starting_anything() {
     ));
 }
 
+#[cfg(windows)]
+mod windows_console {
+    use super::now;
+    use noteiq_core::workiq::WorkiqClient;
+    use std::{fs, process::Command, time::Duration};
+
+    // A console-subsystem MCP server must have no console, including when a .cmd
+    // wrapper launches it. Checking in the child catches even brief terminal flashes.
+    const SERVER: &str = r##"
+use std::io::{self, BufRead, Write};
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetConsoleWindow() -> *mut std::ffi::c_void;
+}
+fn main() {
+    assert_eq!(std::env::args().nth(1).as_deref(), Some("mcp"));
+    assert!(unsafe { GetConsoleWindow() }.is_null(), "MCP server has a console");
+    let stdin = io::stdin();
+    let mut stdout = io::stdout().lock();
+    for line in stdin.lock().lines() {
+        let line = line.unwrap();
+        let Some((_, rest)) = line.split_once("\"id\":") else { continue };
+        let id: String = rest.trim_start().chars().take_while(char::is_ascii_digit).collect();
+        let result = if line.contains("\"initialize\"") {
+            r#"{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fake-workiq","version":"0"}}"#
+        } else if line.contains("\"tools/list\"") {
+            r#"{"tools":[{"name":"retrieve","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"capabilities":{"type":["array","null"],"items":{"anyOf":[{"properties":{"name":{"const":"Meetings"}}}]}}},"required":["query"]}}]}"#
+        } else {
+            r#"{"content":[],"structuredContent":{"application/vnd.ms-workiq.retrieval":{"results":[]}},"isError":false}"#
+        };
+        writeln!(stdout, "{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{result}}}").unwrap();
+        stdout.flush().unwrap();
+    }
+}
+"##;
+
+    fn lookup_without_console(wrapper: bool) {
+        let directory = tempfile::Builder::new()
+            .prefix("noteiq console test ")
+            .tempdir()
+            .unwrap();
+        let source = directory.path().join("server.rs");
+        let binary = directory.path().join("fake-workiq.exe");
+        fs::write(&source, SERVER).unwrap();
+        let output = Command::new("rustc")
+            .arg("--crate-name=fake_workiq")
+            .arg("--edition=2024")
+            .arg(&source)
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .expect("compile the console-subsystem MCP fixture");
+        assert!(
+            output.status.success(),
+            "fixture compilation failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let executable = if wrapper {
+            let script = directory.path().join("workiq.cmd");
+            fs::write(&script, "@echo off\r\n\"%~dp0fake-workiq.exe\" %*\r\n").unwrap();
+            script
+        } else {
+            binary
+        };
+        let meetings = WorkiqClient::new(executable)
+            .with_timeout(Duration::from_secs(10))
+            .discover_meetings(now())
+            .expect("complete MCP handshake and lookup without a console");
+        assert!(meetings.is_empty());
+    }
+
+    #[test]
+    fn exe_server_completes_mcp_lookup_without_a_console() {
+        lookup_without_console(false);
+    }
+
+    #[test]
+    fn cmd_server_completes_mcp_lookup_without_a_console() {
+        lookup_without_console(true);
+    }
+}
+
 #[cfg(unix)]
 mod fake_server {
     use super::now;

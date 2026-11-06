@@ -16,6 +16,8 @@ mod hotkey;
 #[allow(unsafe_code)]
 mod instance;
 #[cfg(windows)]
+mod keyboard;
+#[cfg(windows)]
 mod launch;
 #[cfg(windows)]
 mod meeting_ui;

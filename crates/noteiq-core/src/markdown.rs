@@ -1,23 +1,20 @@
-//! Renders a capture in the vault's capture layout (`_templates/capture.md`): Obsidian
-//! properties first, then a title, empty Summary and Follow-ups sections for later refinement,
-//! and the typed text verbatim inside a frozen "Raw capture" block.
+//! Renders Obsidian properties, meeting context, optional refinement sections,
+//! and the typed text as ordinary editable Markdown.
 
 use crate::model::{Capture, Invitee, InviteeRole, Meeting, Rsvp, format_contact};
 use chrono::{DateTime, FixedOffset, Offset, SecondsFormat, TimeZone};
 use chrono_tz::Tz;
 use thiserror::Error;
 
-/// Layout version written as `noteiq_schema`; version 3 is the vault capture layout.
-pub const NOTE_SCHEMA: u32 = 3;
+/// Layout version written as `noteiq_schema`; version 4 uses an editable Notes section.
+pub const NOTE_SCHEMA: u32 = 4;
 
 const BASE_TAGS: [&str; 2] = ["capture", "note"];
 const FALLBACK_TITLE: &str = "Quick note";
 const MAX_TITLE_CHARS: usize = 80;
 const MARKDOWN_SPECIAL: &str = "\\`*_[]<>#|~$%=";
 const WIKILINK_FORBIDDEN: &str = "[]|#^\\/:*?\"<>";
-const REFINE_HINT: &str = "<!-- Captured with NoteIQ. Ask the assistant to \"refine this note\" to add a Summary and\n     Follow-ups — the Raw capture block stays frozen as non-AI evidence. -->\n";
-const RAW_CAPTURE_OPEN: &str = "<details>\n<summary>Raw capture (frozen — evidence, non-AI)</summary>\n\n<!-- ⛔ Verbatim, as typed in NoteIQ. Never edited after capture. -->\n\n";
-const RAW_CAPTURE_CLOSE: &str = "</details>\n";
+const REFINE_HINT: &str = "<!-- Captured with NoteIQ. Ask the assistant to \"refine this note\" to add a Summary and\n     Follow-ups. Notes below are editable Markdown. -->\n";
 
 struct InviteeGroup {
     role: InviteeRole,
@@ -141,16 +138,11 @@ pub fn render_markdown(
     if let Some(meeting) = &capture.meeting {
         write_meeting_details(&mut output, meeting, clock);
     }
-    output.push_str("## Summary\n\n## Follow-ups\n\n---\n\n");
-    output.push_str(RAW_CAPTURE_OPEN);
-    if !capture.body.is_empty() {
-        output.push_str(&capture.body);
-        if !capture.body.ends_with('\n') {
-            output.push('\n');
-        }
+    output.push_str("## Summary\n\n## Follow-ups\n\n---\n\n## Notes\n\n");
+    output.push_str(&capture.body);
+    if !capture.body.is_empty() && !capture.body.ends_with('\n') {
         output.push('\n');
     }
-    output.push_str(RAW_CAPTURE_CLOSE);
     Ok(output)
 }
 

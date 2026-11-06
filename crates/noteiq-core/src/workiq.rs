@@ -939,7 +939,15 @@ impl McpProcess {
         if !executable.is_file() {
             return Err(WorkiqError::ExecutableMissing);
         }
-        let mut child = Command::new(executable)
+        let mut command = Command::new(executable);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // Piped stdio alone does not prevent console applications (or .cmd wrappers)
+            // from opening a terminal when launched by a Windows GUI application.
+            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let mut child = command
             .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

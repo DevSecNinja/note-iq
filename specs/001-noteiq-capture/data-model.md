@@ -66,12 +66,13 @@ properties first (`kind`, `source`, `from`, `date`, `captured`, `processing`,
 `"Name <email>"` lists in `required_invitees` and `optional_invitees` (always
 present, possibly empty) and non-empty `resource_invitees`/`other_invitees`,
 and `calendar_event_id`), then NoteIQ
-bookkeeping (`id`, `updated`, `timezone`, `captured_via`, `noteiq_schema: 3`).
+bookkeeping (`id`, `updated`, `timezone`, `captured_via`, `noteiq_schema: 4`).
 Strings are quoted so YAML never coerces them. The body follows a blank line:
 an escaped `# Title`, a From/Captured line, a refine hint, `## Meeting details`
 with local times, duration, organizer, RSVP and invitee RSVP/attendance,
 empty `## Summary` and `## Follow-ups` sections, and the user's text verbatim
-in a collapsed Raw capture block. Unknown attendance is not false, and RSVP is
+under `## Notes` as ordinary editable Markdown, without a generated HTML wrapper
+or code fence. Unknown attendance is not false, and RSVP is
 not evidence of attendance. Existing files are not migrated. Removing meeting
 context removes all meeting-specific keys and the Meeting details section.
 
