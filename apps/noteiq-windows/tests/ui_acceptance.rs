@@ -224,7 +224,7 @@ fn meeting_picker_and_note_fit_the_minimum_window_size() {
     let window = open_window();
     window.window().set_size(LogicalSize::new(640.0, 540.0));
     show_meetings(&window, &[STANDUP, REVIEW], 2);
-    let hint = "2 meetings in progress — choose one";
+    let hint = "Checking your calendar...";
     window.set_meeting_hint(hint.into());
     settle();
 
@@ -242,6 +242,28 @@ fn meeting_picker_and_note_fit_the_minimum_window_size() {
     for label in ["Refresh meetings", "Save"] {
         assert_inside_window(&window, &element(&window, label, AccessibleRole::Button));
     }
+}
+
+#[test]
+fn clearing_the_meeting_caption_returns_space_to_the_editor() {
+    let window = open_window();
+    let message = "Couldn't refresh meetings. Showing earlier results.";
+    window.set_meeting_hint(message.into());
+    settle();
+    assert!(shows_text(&window, message));
+    let with_caption = element(&window, "Note contents", AccessibleRole::TextInput)
+        .size()
+        .height;
+    window.set_meeting_hint("".into());
+    settle();
+    assert!(!shows_text(&window, message));
+    let without_caption = element(&window, "Note contents", AccessibleRole::TextInput)
+        .size()
+        .height;
+    assert!(
+        without_caption > with_caption,
+        "empty captions must not consume an editor row"
+    );
 }
 
 #[test]

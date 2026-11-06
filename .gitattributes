@@ -1,1 +1,2 @@
 crates/noteiq-core/tests/fixtures/** text eol=lf
+*.md text eol=lf

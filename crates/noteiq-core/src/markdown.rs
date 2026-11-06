@@ -143,7 +143,11 @@ pub fn render_markdown(
     if !capture.body.is_empty() && !capture.body.ends_with('\n') {
         output.push('\n');
     }
-    Ok(output)
+    Ok(if capture.restored_document.is_some() {
+        crate::saved_note::render_restored(capture, &output)
+    } else {
+        output
+    })
 }
 
 fn yaml_string(value: &str) -> Result<String, MarkdownError> {
@@ -228,7 +232,7 @@ fn write_meeting_properties(
         if let Some(time) = time {
             output.push_str(&format!(
                 "{key}: {}\n",
-                clock.at(time).to_rfc3339_opts(SecondsFormat::Secs, false)
+                clock.at(time).to_rfc3339_opts(SecondsFormat::AutoSi, false)
             ));
         }
     }

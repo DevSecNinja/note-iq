@@ -39,7 +39,10 @@ additional paths, query parameters, and fragments are rejected.
 Closing the window with the Windows title-bar close button (×) finishes the
 capture and hides the window; NoteIQ has no separate Close button. It keeps
 running in the tray so the shortcut stays available. Use **Quit** in the tray
-menu to exit. Running `noteiq new` (or opening `noteiq://new`) while a capture
+menu to exit. Tray actions wake the UI event loop directly, including while
+the capture is hidden. Quit saves the capture first; if saving fails, the
+window is shown with the error rather than discarding the note.
+Running `noteiq new` (or opening `noteiq://new`) while a capture
 is open brings that capture to the front without discarding its text; after
 the capture is closed, it starts a fresh one.
 
@@ -53,6 +56,34 @@ embedded NoteIQ icon. The build generates 16-256px Windows icon sizes from
 `apps/noteiq-windows/assets/noteiq.svg`; no loose image files are needed at
 runtime. If an older pinned shortcut still shows a generic icon after an update,
 unpin it and pin the rebuilt executable again.
+
+The meeting dropdown shows the selected meeting or **No meeting** without a
+redundant status caption. Extra meeting messages appear only during lookup or
+when lookup fails.
+
+Selecting a meeting opens its existing saved NoteIQ capture, if one exists in
+the selected destination's `captures/YYYY/MM` history. The current draft is saved
+under its original meeting before switching; a failed save leaves it open.
+Without an existing capture, selecting a meeting attaches it to the current note
+as before. Automatic attachment does not reopen files over your text.
+
+Recurring meetings are matched by calendar identity **and occurrence start**,
+not by title or series identity alone. When several captures exist for the same
+occurrence, the most recently updated one opens; the other files remain intact.
+Occurrence timestamps retain fractional seconds so precise calendar starts match
+their saved captures.
+The currently open saved occurrence is never reloaded over unsaved text.
+
+Reopening supports schema-4 captures with an editable `## Notes` section.
+Earlier literal-wrapper layouts report an error rather than being migrated
+silently. Notes continues to the end of the file. Summary, Follow-ups, custom
+properties and other content before Notes are preserved, and reopened notes keep
+their original filename. External changes after reopening block save instead of
+being overwritten. Reopened notes with erased text are retained on close to
+avoid deleting refinements; newly created empty notes still delete on close.
+
+A saved-note lookup failure stays visible through typing and autosave until you
+retry the meeting selection, choose **No meeting**, or close the capture.
 
 ### Changing the capture shortcut
 

@@ -47,24 +47,47 @@ impl TrayController {
         })
     }
 
-    pub fn poll(&self) -> Option<TrayAction> {
-        if let Ok(event) = MenuEvent::receiver().try_recv() {
-            return if event.id == self.show_id {
-                Some(TrayAction::Show)
-            } else if event.id == self.new_id {
-                Some(TrayAction::New)
-            } else if event.id == self.quit_id {
-                Some(TrayAction::Quit)
-            } else {
-                None
-            };
-        }
-        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            if event.id() == self._icon.id() && activates_capture(&event) {
-                return Some(TrayAction::Show);
+    pub fn bind(&self, window: slint::Weak<crate::ui_generated::MainWindow>) {
+        let show_id = self.show_id.clone();
+        let new_id = self.new_id.clone();
+        let quit_id = self.quit_id.clone();
+        let menu_window = window.clone();
+        // Native tray windows do not wake winit through the receiver queues.
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            if let Some(action) = menu_action(&event.id, &show_id, &new_id, &quit_id) {
+                dispatch_action(&menu_window, action);
             }
-        }
+        }));
+        let icon_id = self._icon.id().clone();
+        TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+            if event.id() == &icon_id && activates_capture(&event) {
+                dispatch_action(&window, TrayAction::Show);
+            }
+        }));
+    }
+}
+
+fn menu_action(id: &MenuId, show: &MenuId, new: &MenuId, quit: &MenuId) -> Option<TrayAction> {
+    if id == show {
+        Some(TrayAction::Show)
+    } else if id == new {
+        Some(TrayAction::New)
+    } else if id == quit {
+        Some(TrayAction::Quit)
+    } else {
         None
+    }
+}
+
+fn dispatch_action(window: &slint::Weak<crate::ui_generated::MainWindow>, action: TrayAction) {
+    if let Err(error) = window.upgrade_in_event_loop(move |window| {
+        window.invoke_tray_action_requested(match action {
+            TrayAction::Show => 0,
+            TrayAction::New => 1,
+            TrayAction::Quit => 2,
+        });
+    }) {
+        tracing::error!(%error, "Could not deliver the tray action");
     }
 }
 
@@ -82,6 +105,49 @@ fn activates_capture(event: &TrayIconEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quit_delivery_wakes_the_event_loop_with_a_hidden_window() {
+        use slint::ComponentHandle;
+        use std::{cell::Cell, rc::Rc, time::Duration};
+
+        i_slint_backend_testing::init_integration_test_with_system_time();
+        let window = crate::ui_generated::MainWindow::new().unwrap();
+        let delivered = Rc::new(Cell::new(false));
+        let received = delivered.clone();
+        window.on_tray_action_requested(move |action| {
+            assert_eq!(action, 2);
+            received.set(true);
+            slint::quit_event_loop().unwrap();
+        });
+        let timeout = slint::Timer::default();
+        timeout.start(slint::TimerMode::SingleShot, Duration::from_secs(5), || {
+            slint::quit_event_loop().unwrap();
+        });
+        let weak = window.as_weak();
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            dispatch_action(&weak, TrayAction::Quit);
+        });
+        slint::run_event_loop_until_quit().unwrap();
+        worker.join().unwrap();
+        assert!(delivered.get(), "Quit must not depend on timer polling");
+    }
+
+    #[test]
+    fn menu_actions_are_routed_by_id_including_quit() {
+        let show = MenuId::new("show");
+        let new = MenuId::new("new");
+        let quit = MenuId::new("quit");
+        for (id, expected) in [
+            (&show, Some(TrayAction::Show)),
+            (&new, Some(TrayAction::New)),
+            (&quit, Some(TrayAction::Quit)),
+            (&MenuId::new("unrelated"), None),
+        ] {
+            assert_eq!(menu_action(id, &show, &new, &quit), expected);
+        }
+    }
 
     fn click(button: MouseButton, button_state: MouseButtonState) -> TrayIconEvent {
         TrayIconEvent::Click {

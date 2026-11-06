@@ -7,7 +7,7 @@ use crate::{
     meeting_ui::select_and_apply,
     open_note::open_note,
     settings_ui::choose_destination,
-    tray::{TrayAction, TrayController},
+    tray::TrayController,
     workiq_windows::discover_executable,
 };
 use chrono::{DateTime, FixedOffset, Local};
@@ -15,9 +15,10 @@ use noteiq_core::{
     capture::CaptureController,
     destination::{Destination, DestinationError},
     diagnostics::{DiagnosticEvent, DiagnosticOperation, FailureClass},
-    meeting::{browse_meetings, choice_label, meetings_in_progress},
+    meeting::{browse_meetings, choice_label},
     model::{Capture, CaptureSource, Meeting, MeetingDecision},
     note_filename::NoteFilename,
+    saved_note::{SavedNoteError, find_meeting_note, same_occurrence},
     settings::Settings,
     workiq::{WorkiqClient, WorkiqError},
 };
@@ -34,6 +35,15 @@ use std::{
 enum AppEvent {
     Meetings(u64, Result<Vec<Meeting>, WorkiqError>, Instant),
     Author(Option<String>),
+    MeetingNote(NoteRequest, Result<Option<Box<Capture>>, SavedNoteError>),
+}
+
+#[derive(Clone)]
+struct NoteRequest {
+    generation: u64,
+    capture_id: String,
+    root: PathBuf,
+    meeting: Meeting,
 }
 
 /// Calendar results are reused for this long; Refresh always looks again.
@@ -70,6 +80,9 @@ struct AppState {
     destination_error: bool,
     /// The Windows display name, found in the background at startup.
     author: Option<String>,
+    note_lookup_generation: u64,
+    pending_note: Option<NoteRequest>,
+    note_lookup_error: Option<String>,
 }
 
 impl AppState {
@@ -95,6 +108,9 @@ impl AppState {
             lookup_id: 0,
             destination_error: false,
             author: None,
+            note_lookup_generation: 0,
+            pending_note: None,
+            note_lookup_error: None,
         };
         state.capture.capture.author = state.effective_author();
         state
@@ -119,6 +135,10 @@ impl AppState {
 
     fn save_settings(&self) -> Result<(), noteiq_core::settings::SettingsError> {
         self.settings.save(&self.settings_path)
+    }
+
+    fn display_status(&self) -> &str {
+        self.note_lookup_error.as_deref().unwrap_or(&self.status)
     }
 }
 
@@ -254,13 +274,12 @@ fn bind_callbacks(
         let state = state.clone();
         let ui_weak = ui_weak.clone();
         window.on_body_changed(move |text| {
-            state
-                .borrow_mut()
-                .capture
-                .edit(String::from(text), Instant::now());
+            let mut state = state.borrow_mut();
+            state.capture.edit(String::from(text), Instant::now());
+            state.status = "Unsaved changes".to_owned();
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_saved(false);
-                ui.set_status_text("Unsaved changes".into());
+                ui.set_status_text(state.display_status().into());
             }
         });
     }
@@ -321,15 +340,17 @@ fn bind_callbacks(
     {
         let state = state.clone();
         let ui_weak = ui_weak.clone();
+        let sender = sender.clone();
         window.on_meeting_chosen(move |index| {
             let Some(ui) = ui_weak.upgrade() else {
                 return;
             };
-            choose_meeting(
+            request_meeting_note(
                 &ui,
                 &mut state.borrow_mut(),
                 index,
                 Local::now().fixed_offset(),
+                &sender,
             );
         });
     }
@@ -463,6 +484,52 @@ fn bind_callbacks(
         });
     }
 
+    if let Some(tray) = tray.as_ref() {
+        let state = state.clone();
+        let sender = sender.clone();
+        let ui_weak = ui_weak.clone();
+        window.on_tray_action_requested(move |action| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let mut state = state.borrow_mut();
+            let present = match action {
+                0 => {
+                    ensure_capture(&ui, &mut state, &sender, CaptureSource::Tray);
+                    true
+                }
+                1 => {
+                    start_new_capture_state(&ui, &mut state, &sender);
+                    true
+                }
+                2 => {
+                    if close_capture_state(&ui, &mut state) {
+                        if let Err(error) = slint::quit_event_loop() {
+                            tracing::error!(%error, "Could not exit NoteIQ");
+                            state.status =
+                                "NoteIQ could not exit. Please try Quit again.".to_owned();
+                            refresh_view(&ui, &state);
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        true
+                    }
+                }
+                _ => return,
+            };
+            drop(state);
+            if present {
+                if let Err(error) = ui.show() {
+                    tracing::error!(%error, "Could not show NoteIQ after a tray action");
+                }
+                foreground::bring_to_front(ui.window());
+            }
+        });
+        tray.bind(window.as_weak());
+    }
+
     let timer = Timer::default();
     let ui_weak = ui_weak.clone();
     let state_for_timer = state.clone();
@@ -480,6 +547,15 @@ fn bind_callbacks(
                 }
                 AppEvent::Meetings(..) => {}
                 AppEvent::Author(author) => apply_author(&ui, &mut state, author),
+                AppEvent::MeetingNote(request, result) => {
+                    apply_meeting_note(
+                        &ui,
+                        &mut state,
+                        request,
+                        result,
+                        Local::now().fixed_offset(),
+                    );
+                }
             }
         }
         if let Some(ipc) = ipc.as_ref() {
@@ -488,26 +564,7 @@ fn bind_callbacks(
                 present = true;
             }
         }
-        if let Some(tray) = tray.as_ref() {
-            match tray.poll() {
-                Some(TrayAction::Show) => {
-                    ensure_capture(&ui, &mut state, &sender_for_timer, CaptureSource::Tray);
-                    present = true;
-                }
-                Some(TrayAction::New) => {
-                    start_new_capture_state(&ui, &mut state, &sender_for_timer);
-                    present = true;
-                }
-                Some(TrayAction::Quit) => {
-                    if close_capture_state(&ui, &mut state) {
-                        slint::quit_event_loop().ok();
-                    } else {
-                        present = true;
-                    }
-                }
-                None => {}
-            }
-        }
+        let _keep_tray_alive = &tray;
         if hotkeys
             .borrow()
             .as_ref()
@@ -699,7 +756,9 @@ fn close_capture_state(window: &MainWindow, state: &mut AppState) -> bool {
     if !state.capture_open {
         return true;
     }
-    if !state.capture.capture.is_empty() {
+    if !state.capture.capture.is_empty()
+        || (state.capture.capture.path.is_some() && state.capture.is_dirty())
+    {
         save_state(state);
         if state.capture.capture.path.is_none() || state.capture.is_dirty() {
             refresh_view(window, state);
@@ -707,11 +766,17 @@ fn close_capture_state(window: &MainWindow, state: &mut AppState) -> bool {
         }
     }
     if let Err(error) = state.capture.finish() {
+        tracing::warn!(
+            failure_class = "capture_finish_failed",
+            "Could not finish capture"
+        );
         state.status = format!("Could not finish the note: {error}");
         refresh_view(window, state);
         return false;
     }
     state.capture_open = false;
+    state.pending_note = None;
+    state.note_lookup_error = None;
     state.status = "Capture closed.".to_owned();
     refresh_view(window, state);
     true
@@ -754,6 +819,8 @@ fn begin_capture(
     let now = Local::now().fixed_offset();
     let timezone = iana_time_zone::get_timezone().unwrap_or_else(|_| "local".to_owned());
     state.capture = CaptureController::new(Capture::new(source, now, timezone));
+    state.pending_note = None;
+    state.note_lookup_error = None;
     state.capture.capture.author = state.effective_author();
     state.capture_open = true;
     state.status = "Ready".to_owned();
@@ -826,7 +893,7 @@ fn process_meeting_result(
                 if let Some(cached) = state
                     .meetings
                     .iter_mut()
-                    .find(|cached| cached.id == meeting.id)
+                    .find(|cached| same_occurrence(cached, &meeting))
                 {
                     *cached = meeting;
                 } else {
@@ -859,7 +926,7 @@ fn apply_available_meetings_at(
     now: DateTime<FixedOffset>,
 ) {
     state.last_reevaluation = Some(Instant::now());
-    if state.capture_open && state.last_lookup_error.is_none() {
+    if state.capture_open && state.last_lookup_error.is_none() && state.pending_note.is_none() {
         let before = state.capture.capture.meeting.clone();
         select_and_apply(
             &mut state.capture.capture,
@@ -875,6 +942,131 @@ fn apply_available_meetings_at(
 }
 
 /// Applies a choice the user committed in the picker. Option 0 is "No meeting".
+fn request_meeting_note(
+    window: &MainWindow,
+    state: &mut AppState,
+    index: i32,
+    now: DateTime<FixedOffset>,
+    sender: &Sender<AppEvent>,
+) {
+    state.note_lookup_generation = state.note_lookup_generation.wrapping_add(1);
+    state.pending_note = None;
+    state.note_lookup_error = None;
+    let meeting = usize::try_from(index)
+        .ok()
+        .and_then(|position| position.checked_sub(1))
+        .and_then(|position| state.picker_meetings.get(position))
+        .cloned();
+    let Some(meeting) = meeting else {
+        choose_meeting(window, state, index, now);
+        return;
+    };
+    if state.capture.capture.path.is_some()
+        && state
+            .capture
+            .capture
+            .meeting
+            .as_ref()
+            .is_some_and(|current| same_occurrence(current, &meeting))
+    {
+        choose_meeting(window, state, index, now);
+        return;
+    }
+    let request = NoteRequest {
+        generation: state.note_lookup_generation,
+        capture_id: state.capture.capture.id.to_string(),
+        root: state.settings.destination_root.clone(),
+        meeting,
+    };
+    state.pending_note = Some(request.clone());
+    state.status = "Opening meeting note...".to_owned();
+    refresh_view(window, state);
+    let sender = sender.clone();
+    std::thread::spawn(move || {
+        let result = find_meeting_note(&Destination::new(request.root.clone()), &request.meeting)
+            .map(|capture| capture.map(Box::new));
+        if sender.send(AppEvent::MeetingNote(request, result)).is_err() {
+            tracing::warn!(
+                failure_class = "meeting_note_delivery_failed",
+                "Could not deliver meeting note lookup"
+            );
+        }
+    });
+}
+
+fn apply_meeting_note(
+    window: &MainWindow,
+    state: &mut AppState,
+    request: NoteRequest,
+    result: Result<Option<Box<Capture>>, SavedNoteError>,
+    now: DateTime<FixedOffset>,
+) {
+    if !state.capture_open
+        || request.generation != state.note_lookup_generation
+        || state
+            .pending_note
+            .as_ref()
+            .is_none_or(|pending| pending.generation != request.generation)
+    {
+        return;
+    }
+    state.pending_note = None;
+    if request.capture_id != state.capture.capture.id.to_string()
+        || request.root != state.settings.destination_root
+    {
+        state.status = if state.capture.is_dirty() {
+            "Unsaved changes"
+        } else {
+            "Ready"
+        }
+        .to_owned();
+        update_meeting_view(window, state, now);
+        return;
+    }
+    match result {
+        Ok(Some(capture)) if capture.id == state.capture.capture.id => {
+            state
+                .capture
+                .connect_meeting(request.meeting, Instant::now());
+            state.status = if state.capture.is_dirty() {
+                "Unsaved changes"
+            } else {
+                "Ready"
+            }
+            .to_owned();
+        }
+        Ok(Some(capture)) => {
+            if close_capture_state(window, state) {
+                state.capture = CaptureController::new(*capture);
+                state.capture_open = true;
+                state.destination_error = false;
+                state.status = "Saved".to_owned();
+                window.set_note_text(state.capture.capture.body.clone().into());
+                window.invoke_focus();
+            }
+        }
+        Ok(None) => {
+            state
+                .capture
+                .connect_meeting(request.meeting, Instant::now());
+            state.status = if state.capture.is_dirty() {
+                "Unsaved changes"
+            } else {
+                "Ready"
+            }
+            .to_owned();
+        }
+        Err(error) => {
+            tracing::warn!(
+                failure_class = "meeting_note_open_failed",
+                "Could not open meeting note"
+            );
+            state.note_lookup_error = Some(format!("Could not open the meeting note: {error}"));
+        }
+    }
+    update_meeting_view(window, state, now);
+}
+
 fn choose_meeting(
     window: &MainWindow,
     state: &mut AppState,
@@ -897,7 +1089,7 @@ fn choose_meeting(
                     .capture
                     .meeting
                     .as_ref()
-                    .is_some_and(|attached| attached.id == meeting.id);
+                    .is_some_and(|attached| same_occurrence(attached, &meeting));
                 if already_attached {
                     // Confirms an automatic choice so it is never replaced.
                     state.capture.capture.meeting_decision = MeetingDecision::Selected;
@@ -910,6 +1102,8 @@ fn choose_meeting(
     }
     if state.capture.is_dirty() {
         state.status = "Unsaved changes".to_owned();
+    } else if state.status == "Opening meeting note..." {
+        state.status = "Ready".to_owned();
     }
     update_meeting_view(window, state, now);
 }
@@ -919,7 +1113,10 @@ fn choose_meeting(
 fn update_meeting_view(window: &MainWindow, state: &mut AppState, now: DateTime<FixedOffset>) {
     let mut choices = browse_meetings(&state.meetings, now);
     let selected = match state.capture.capture.meeting.as_ref() {
-        Some(attached) => match choices.iter().position(|meeting| meeting.id == attached.id) {
+        Some(attached) => match choices
+            .iter()
+            .position(|meeting| same_occurrence(meeting, attached))
+        {
             Some(position) => {
                 choices[position] = attached.clone();
                 position + 1
@@ -946,11 +1143,11 @@ fn update_meeting_view(window: &MainWindow, state: &mut AppState, now: DateTime<
         state.meeting_options = options;
     }
     window.set_meeting_index(i32::try_from(selected).unwrap_or(0));
-    state.meeting_hint = meeting_hint(state, now);
+    state.meeting_hint = meeting_hint(state);
     refresh_view(window, state);
 }
 
-fn meeting_hint(state: &AppState, now: DateTime<FixedOffset>) -> String {
+fn meeting_hint(state: &AppState) -> String {
     if state.lookup_pending {
         return CHECKING_CALENDAR.to_owned();
     }
@@ -969,32 +1166,11 @@ fn meeting_hint(state: &AppState, now: DateTime<FixedOffset>) -> String {
     if state.last_meeting_refresh.is_none() {
         return CHECKING_CALENDAR.to_owned();
     }
-    let capture = &state.capture.capture;
-    let hint = match (capture.meeting_decision, capture.meeting.as_ref()) {
-        (MeetingDecision::Automatic, Some(meeting)) => {
-            if meeting.end.is_some_and(|end| end <= now) {
-                "Connected automatically · ended"
-            } else if meeting.start.is_some_and(|start| start <= now) {
-                "Connected automatically · in progress"
-            } else {
-                "Connected automatically"
-            }
-        }
-        (MeetingDecision::Selected, Some(_)) => "Selected for this note",
-        (MeetingDecision::Disconnected, _) => "No meeting attached to this note",
-        _ if state.picker_meetings.is_empty() => "No meetings found. You can keep writing.",
-        _ if !state.settings.auto_connect_meeting => "Automatic meeting connection is off",
-        _ => match meetings_in_progress(&state.meetings, now) {
-            0 => "No meeting in progress",
-            1 => "1 meeting in progress — choose it to attach",
-            count => return format!("{count} meetings in progress — choose one"),
-        },
-    };
-    hint.to_owned()
+    String::new()
 }
 
 fn refresh_view(window: &MainWindow, state: &AppState) {
-    window.set_status_text(state.status.clone().into());
+    window.set_status_text(state.display_status().into());
     window.set_meeting_hint(state.meeting_hint.clone().into());
     window.set_meeting_picker_enabled(!state.picker_meetings.is_empty());
     window.set_meeting_refresh_enabled(!state.lookup_pending);
@@ -1108,6 +1284,407 @@ mod tests {
 
     fn file_name(path: &Path) -> String {
         path.file_name().unwrap().to_string_lossy().into_owned()
+    }
+
+    fn switching_fixture() -> (tempfile::TempDir, MainWindow, AppState, Capture) {
+        let folder = tempfile::tempdir().unwrap();
+        let now = fixed_now();
+        let selected = meeting_at("older", now, -120, -90);
+        let mut saved = Capture::new(CaptureSource::Cli, now, "Europe/Amsterdam".into());
+        saved.connect(selected.clone());
+        saved.set_body("Previous meeting text");
+        noteiq_core::destination::save_capture(
+            &mut saved,
+            &Destination::new(folder.path().into()),
+            now,
+        )
+        .unwrap();
+        let settings = Settings {
+            destination_root: folder.path().into(),
+            ..test_settings()
+        };
+        let (window, state) = window_with_settings(
+            settings,
+            vec![selected, meeting_at("current", now, -10, 20)],
+            now,
+        );
+        (folder, window, state, saved)
+    }
+
+    fn lookup_note(window: &MainWindow, state: &mut AppState, selected: &Meeting) -> AppEvent {
+        let index = state
+            .picker_meetings
+            .iter()
+            .position(|m| same_occurrence(m, selected))
+            .unwrap()
+            + 1;
+        let (sender, receiver) = mpsc::channel();
+        request_meeting_note(window, state, index as i32, fixed_now(), &sender);
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("bounded saved-note lookup")
+    }
+
+    fn deliver_note(window: &MainWindow, state: &mut AppState, event: AppEvent) {
+        let AppEvent::MeetingNote(request, result) = event else {
+            panic!("expected saved-note response")
+        };
+        apply_meeting_note(window, state, request, result, fixed_now());
+    }
+
+    #[test]
+    fn picker_callback_and_event_timer_install_the_background_lookup_result() {
+        let (_folder, window, state, saved) = switching_fixture();
+        let selected = state
+            .picker_meetings
+            .iter()
+            .position(|m| same_occurrence(m, saved.meeting.as_ref().unwrap()))
+            .unwrap()
+            + 1;
+        let state = Rc::new(RefCell::new(state));
+        let (lookup_sender, lookup_receiver) = mpsc::channel();
+        let (event_sender, events) = mpsc::channel();
+        let _timer = bind_callbacks(&window, &state, lookup_sender, None, None, None, events);
+        window.invoke_meeting_chosen(selected as i32);
+        let event = lookup_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        event_sender
+            .send(event)
+            .unwrap_or_else(|_| panic!("event channel closed"));
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(201));
+        assert_eq!(state.borrow().capture.capture.id, saved.id);
+        assert_eq!(window.get_note_text(), "Previous meeting text\n");
+    }
+
+    #[test]
+    fn selection_reopens_the_note_after_saving_the_latest_draft_in_its_original_context() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        let draft_id = state.capture.capture.id;
+        state.capture.edit("Draft", Instant::now());
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        state
+            .capture
+            .edit("Latest typing during lookup", Instant::now());
+        deliver_note(&window, &mut state, event);
+        assert_eq!(state.capture.capture.id, saved.id);
+        assert_eq!(state.capture.capture.path, saved.path);
+        assert_eq!(window.get_note_text(), "Previous meeting text\n");
+        assert!(!state.capture.is_dirty());
+        assert!(state.capture_open);
+        assert!(state.pending_note.is_none());
+        let current = state.meetings.iter().find(|m| m.id == "current").unwrap();
+        let draft = find_meeting_note(
+            &Destination::new(state.settings.destination_root.clone()),
+            current,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(draft.id, draft_id);
+        assert_eq!(draft.body, "Latest typing during lookup\n");
+        state
+            .capture
+            .edit("Continued previous note", Instant::now());
+        save_state(&mut state);
+        assert_eq!(state.capture.capture.path, saved.path);
+        assert!(
+            std::fs::read_to_string(saved.path.unwrap())
+                .unwrap()
+                .ends_with("Continued previous note\n")
+        );
+    }
+
+    #[test]
+    fn selecting_a_meeting_without_a_note_attaches_without_replacing_the_draft() {
+        let (_folder, window, mut state, _) = switching_fixture();
+        let selected = meeting_at("not-yet-saved", fixed_now(), -60, -30);
+        state.meetings.push(selected.clone());
+        update_meeting_view(&window, &mut state, fixed_now());
+        state.capture.edit("Keep the current draft", Instant::now());
+        let id = state.capture.capture.id;
+        let event = lookup_note(&window, &mut state, &selected);
+        deliver_note(&window, &mut state, event);
+        assert_eq!(state.capture.capture.id, id);
+        assert_eq!(state.capture.capture.body, "Keep the current draft");
+        assert_eq!(state.capture.capture.meeting, Some(selected));
+        assert!(state.capture.capture.path.is_none());
+    }
+
+    #[test]
+    fn failed_save_blocks_switching_without_losing_text_or_context() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        state.capture.edit("Persisted draft", Instant::now());
+        save_state(&mut state);
+        let path = state.capture.capture.path.clone().unwrap();
+        let id = state.capture.capture.id;
+        state.capture.edit("Latest unsaved draft", Instant::now());
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        std::fs::write(&path, "Externally replaced file").unwrap();
+        deliver_note(&window, &mut state, event);
+        assert_eq!(state.capture.capture.id, id);
+        assert_eq!(state.capture.capture.body, "Latest unsaved draft");
+        assert_eq!(attached_id(&state), Some("current"));
+        assert!(state.capture.is_dirty());
+        assert!(state.capture_open);
+        assert!(state.status.contains("Could not save"));
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "Externally replaced file"
+        );
+    }
+
+    #[test]
+    fn no_meeting_cancels_an_in_flight_reopen_and_stays_detached() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        let id = state.capture.capture.id;
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        let (sender, _) = mpsc::channel();
+        request_meeting_note(&window, &mut state, 0, fixed_now(), &sender);
+        deliver_note(&window, &mut state, event);
+        assert_eq!(state.capture.capture.id, id);
+        assert_eq!(state.capture.capture.meeting, None);
+        assert_eq!(
+            state.capture.capture.meeting_decision,
+            MeetingDecision::Disconnected
+        );
+        assert!(state.pending_note.is_none());
+    }
+
+    #[test]
+    fn no_meeting_on_a_reopened_note_removes_its_persisted_context() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        deliver_note(&window, &mut state, event);
+        let (sender, _) = mpsc::channel();
+        request_meeting_note(&window, &mut state, 0, fixed_now(), &sender);
+        save_state(&mut state);
+        assert!(!state.capture.is_dirty());
+        assert_eq!(state.capture.capture.path, saved.path);
+        let text = std::fs::read_to_string(saved.path.unwrap()).unwrap();
+        assert!(!text.contains("calendar_event_id:"));
+        assert!(!text.contains("## Meeting details"));
+        assert!(text.ends_with("Previous meeting text\n"));
+    }
+
+    #[test]
+    fn a_destination_change_rejects_the_response_and_clears_pending_selection() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        let id = state.capture.capture.id;
+        let next = tempfile::tempdir().unwrap();
+        state.settings.destination_root = next.path().into();
+        deliver_note(&window, &mut state, event);
+        assert_eq!(state.capture.capture.id, id);
+        assert_eq!(attached_id(&state), Some("current"));
+        assert!(state.pending_note.is_none());
+        assert_ne!(state.status, "Opening meeting note...");
+    }
+
+    #[test]
+    fn obsolete_responses_cannot_replace_a_new_capture_or_newer_selection() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        let latest = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        deliver_note(&window, &mut state, event);
+        assert!(state.pending_note.is_some());
+        deliver_note(&window, &mut state, latest);
+        assert_eq!(state.capture.capture.id, saved.id);
+        let selected = meeting_at("current", fixed_now(), -10, 20);
+        let event = lookup_note(&window, &mut state, &selected);
+        let (sender, _) = mpsc::channel();
+        start_new_capture_state(&window, &mut state, &sender);
+        let id = state.capture.capture.id;
+        deliver_note(&window, &mut state, event);
+        assert_eq!(state.capture.capture.id, id);
+        assert_ne!(id, saved.id);
+        assert!(state.capture.capture.body.is_empty());
+        assert!(state.pending_note.is_none());
+    }
+
+    #[test]
+    fn choosing_the_active_saved_occurrence_does_not_reload_over_unsaved_text() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        deliver_note(&window, &mut state, event);
+        state.capture.edit("Not saved yet", Instant::now());
+        let index = state
+            .picker_meetings
+            .iter()
+            .position(|m| same_occurrence(m, saved.meeting.as_ref().unwrap()))
+            .unwrap()
+            + 1;
+        let (sender, receiver) = mpsc::channel();
+        request_meeting_note(&window, &mut state, index as i32, fixed_now(), &sender);
+        assert!(state.pending_note.is_none());
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(state.capture.capture.body, "Not saved yet");
+        assert!(state.capture.is_dirty());
+    }
+
+    #[test]
+    fn reattaching_a_detached_unsaved_note_never_reloads_its_older_disk_text() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        deliver_note(&window, &mut state, event);
+        choose_meeting(&window, &mut state, 0, fixed_now());
+        state.capture.edit("Unsaved continuation", Instant::now());
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        deliver_note(&window, &mut state, event);
+        assert_eq!(state.capture.capture.id, saved.id);
+        assert_eq!(state.capture.capture.body, "Unsaved continuation");
+        assert_eq!(state.capture.capture.meeting, saved.meeting);
+    }
+
+    #[test]
+    fn malformed_saved_note_reports_an_error_and_retains_the_current_draft() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        let path = saved.path.unwrap();
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("noteiq_schema: 4", "noteiq_schema: 3");
+        std::fs::write(path, text).unwrap();
+        state.capture.edit("Keep this draft", Instant::now());
+        let id = state.capture.capture.id;
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        deliver_note(&window, &mut state, event);
+        assert_eq!(state.capture.capture.id, id);
+        assert_eq!(state.capture.capture.body, "Keep this draft");
+        assert!(state.capture.is_dirty());
+        assert!(
+            state
+                .display_status()
+                .contains("Could not open the meeting note")
+        );
+        assert!(state.pending_note.is_none());
+    }
+
+    #[test]
+    fn lookup_error_survives_same_tick_autosave_and_typing_until_retry_or_cancellation() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        state.capture.edit(
+            "Draft ready for autosave",
+            Instant::now() - Duration::from_secs(30),
+        );
+        assert!(state.capture.autosave_due(Instant::now()));
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        let AppEvent::MeetingNote(request, _) = event else {
+            panic!("expected saved-note response")
+        };
+        let state = Rc::new(RefCell::new(state));
+        let (lookup_sender, lookup_receiver) = mpsc::channel();
+        let (event_sender, events) = mpsc::channel();
+        let _timer = bind_callbacks(&window, &state, lookup_sender, None, None, None, events);
+        event_sender
+            .send(AppEvent::MeetingNote(
+                request,
+                Err(SavedNoteError::InvalidCapture),
+            ))
+            .unwrap_or_else(|_| panic!("event channel closed"));
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(201));
+        assert!(!state.borrow().capture.is_dirty());
+        assert!(state.borrow().status.starts_with("Saved "));
+        assert!(
+            window
+                .get_status_text()
+                .contains("Could not open the meeting note")
+        );
+        window.invoke_body_changed("More typing".into());
+        assert!(
+            window
+                .get_status_text()
+                .contains("Could not open the meeting note")
+        );
+
+        window.invoke_meeting_chosen(0);
+        assert!(state.borrow().note_lookup_error.is_none());
+        assert!(!window.get_status_text().contains("Could not open"));
+
+        let mut borrowed = state.borrow_mut();
+        let event = lookup_note(&window, &mut borrowed, saved.meeting.as_ref().unwrap());
+        let AppEvent::MeetingNote(request, _) = event else {
+            panic!("expected saved-note response")
+        };
+        apply_meeting_note(
+            &window,
+            &mut borrowed,
+            request,
+            Err(SavedNoteError::InvalidCapture),
+            fixed_now(),
+        );
+        assert!(borrowed.note_lookup_error.is_some());
+        let index = borrowed
+            .picker_meetings
+            .iter()
+            .position(|m| same_occurrence(m, saved.meeting.as_ref().unwrap()))
+            .unwrap()
+            + 1;
+        drop(borrowed);
+        window.invoke_meeting_chosen(index as i32);
+        assert!(state.borrow().note_lookup_error.is_none());
+        lookup_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+    }
+
+    #[test]
+    fn picker_keeps_shared_series_ids_as_distinct_occurrences() {
+        let now = fixed_now();
+        let earlier = meeting_at("series", now, -120, -90);
+        let current = meeting_at("series", now, -10, 20);
+        let (window, mut state) = window_with(vec![earlier.clone(), current.clone()], now);
+        assert_eq!(state.picker_meetings.len(), 2);
+        assert!(same_occurrence(
+            &state.picker_meetings[window.get_meeting_index() as usize - 1],
+            &current
+        ));
+        let index = state
+            .picker_meetings
+            .iter()
+            .position(|m| same_occurrence(m, &earlier))
+            .unwrap()
+            + 1;
+        choose_meeting(&window, &mut state, index as i32, now);
+        assert_eq!(state.capture.capture.meeting, Some(earlier));
+    }
+
+    #[test]
+    fn quit_finishes_and_saves_the_latest_capture_text() {
+        let (window, mut state, _) = cached_window();
+        let folder = tempfile::tempdir().unwrap();
+        state.settings.destination_root = folder.path().to_path_buf();
+        state.capture.edit("Saved before quitting", Instant::now());
+        save_state(&mut state);
+        state
+            .capture
+            .edit("Latest text before quitting", Instant::now());
+
+        assert!(close_capture_state(&window, &mut state));
+        assert!(!state.capture_open);
+        assert!(!state.capture.is_dirty());
+        let path = state.capture.capture.path.as_ref().unwrap();
+        let saved = std::fs::read_to_string(path).unwrap();
+        assert!(saved.contains("Latest text before quitting"));
+        assert!(!saved.contains("Saved before quitting"));
+        assert!(close_capture_state(&window, &mut state));
+    }
+
+    #[test]
+    fn quit_keeps_the_capture_open_and_reports_a_failed_save() {
+        let (window, mut state, _) = cached_window();
+        state.settings.destination_root =
+            std::env::temp_dir().join(format!("noteiq-missing-{}", state.capture.capture.id));
+        assert!(!state.settings.destination_root.exists());
+        state
+            .capture
+            .edit("Keep this unsaved draft", Instant::now());
+
+        assert!(!close_capture_state(&window, &mut state));
+        assert!(state.capture_open);
+        assert!(state.capture.is_dirty());
+        assert_eq!(state.capture.capture.body, "Keep this unsaved draft");
+        assert!(state.capture.capture.path.is_none());
+        assert_ne!(window.get_status_text(), "Ready");
+        assert!(!window.get_status_text().is_empty());
     }
 
     #[test]
@@ -1301,10 +1878,7 @@ mod tests {
         assert!(expected[1].starts_with("current · "), "{}", expected[1]);
         assert!(expected[2].starts_with("older · "), "{}", expected[2]);
         assert_eq!(window.get_meeting_index(), 1);
-        assert_eq!(
-            window.get_meeting_hint(),
-            "Connected automatically · in progress"
-        );
+        assert_eq!(window.get_meeting_hint(), "");
     }
 
     #[test]
@@ -1336,10 +1910,7 @@ mod tests {
             "the change is saved after the usual pause"
         );
         assert_eq!(window.get_meeting_index(), 0);
-        assert_eq!(
-            window.get_meeting_hint(),
-            "No meeting attached to this note"
-        );
+        assert_eq!(window.get_meeting_hint(), "");
 
         save_state(&mut state);
         let disconnected = state.capture.capture.path.clone().expect("note saved");
@@ -1368,7 +1939,7 @@ mod tests {
             MeetingDecision::Selected
         );
         assert_eq!(window.get_meeting_index(), 2);
-        assert_eq!(window.get_meeting_hint(), "Selected for this note");
+        assert_eq!(window.get_meeting_hint(), "");
 
         let current = state.meetings[1].clone();
         state.lookup_pending = true;
@@ -1376,7 +1947,7 @@ mod tests {
         apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(1));
         assert_eq!(attached_id(&state), Some("older"));
         assert_eq!(window.get_meeting_index(), 2);
-        assert_eq!(window.get_meeting_hint(), "Selected for this note");
+        assert_eq!(window.get_meeting_hint(), "");
     }
 
     #[test]
@@ -1393,7 +1964,7 @@ mod tests {
             MeetingDecision::Selected
         );
         assert!(!state.capture.is_dirty());
-        assert_eq!(window.get_meeting_hint(), "Selected for this note");
+        assert_eq!(window.get_meeting_hint(), "");
     }
 
     #[test]
@@ -1402,7 +1973,7 @@ mod tests {
         let (window, mut state) = window_with(vec![meeting_at("standup", now, 5, 35)], now);
         assert_eq!(attached_id(&state), None);
         assert_eq!(window.get_meeting_index(), 0);
-        assert_eq!(window.get_meeting_hint(), "No meeting in progress");
+        assert_eq!(window.get_meeting_hint(), "");
         assert!(
             window.get_meeting_picker_enabled(),
             "an upcoming meeting can be chosen early"
@@ -1411,10 +1982,7 @@ mod tests {
         apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(6));
         assert_eq!(attached_id(&state), Some("standup"));
         assert_eq!(window.get_meeting_index(), 1);
-        assert_eq!(
-            window.get_meeting_hint(),
-            "Connected automatically · in progress"
-        );
+        assert_eq!(window.get_meeting_hint(), "");
         assert!(!state.capture.is_dirty(), "an empty draft is not saved");
     }
 
@@ -1431,10 +1999,7 @@ mod tests {
         apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(21));
         assert_eq!(attached_id(&state), None);
         assert_eq!(window.get_meeting_index(), 0);
-        assert_eq!(
-            window.get_meeting_hint(),
-            "1 meeting in progress — choose it to attach"
-        );
+        assert_eq!(window.get_meeting_hint(), "");
     }
 
     #[test]
@@ -1513,10 +2078,7 @@ mod tests {
 
         state.lookup_pending = true;
         process_meeting_result(&window, &mut state, Ok(Vec::new()), Instant::now());
-        assert_eq!(
-            window.get_meeting_hint(),
-            "No meetings found. You can keep writing."
-        );
+        assert_eq!(window.get_meeting_hint(), "");
         assert!(!window.get_meeting_picker_enabled());
 
         state.meetings = vec![
@@ -1526,28 +2088,22 @@ mod tests {
         apply_available_meetings_at(&window, &mut state, now);
         assert_eq!(attached_id(&state), None);
         assert_eq!(window.get_meeting_index(), 0);
-        assert_eq!(
-            window.get_meeting_hint(),
-            "2 meetings in progress — choose one"
-        );
+        assert_eq!(window.get_meeting_hint(), "");
 
         state.settings.auto_connect_meeting = false;
         state.meetings.truncate(1);
         apply_available_meetings_at(&window, &mut state, now);
         assert_eq!(attached_id(&state), None);
-        assert_eq!(
-            window.get_meeting_hint(),
-            "Automatic meeting connection is off"
-        );
+        assert_eq!(window.get_meeting_hint(), "");
     }
 
     #[test]
-    fn the_hint_shows_when_the_automatic_meeting_has_ended() {
+    fn an_ended_meeting_does_not_add_a_redundant_caption() {
         let (window, mut state, now) = cached_window();
         apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(25));
         assert_eq!(attached_id(&state), Some("current"));
         assert_eq!(window.get_meeting_index(), 1);
-        assert_eq!(window.get_meeting_hint(), "Connected automatically · ended");
+        assert_eq!(window.get_meeting_hint(), "");
     }
 
     #[test]
@@ -1571,7 +2127,7 @@ mod tests {
         apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(15));
         assert_eq!(attached_id(&state), Some("first"));
         assert_eq!(window.get_meeting_index(), 2);
-        assert_eq!(window.get_meeting_hint(), "Connected automatically · ended");
+        assert_eq!(window.get_meeting_hint(), "");
     }
 
     #[test]

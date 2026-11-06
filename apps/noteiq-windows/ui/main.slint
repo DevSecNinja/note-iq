@@ -53,6 +53,7 @@ export component MainWindow inherits Window {
     callback note-filename-edited(string);
     callback note-filename-changed(string);
     callback new-note-requested();
+    callback tray-action-requested(int);
 
     // Applies pending settings; Settings stays open while a value is rejected.
     function close-settings() {
@@ -185,7 +186,7 @@ export component MainWindow inherits Window {
                                         }
                                     }
 
-                                    Text {
+                                    if root.meeting-hint != "" : Text {
                                         text: root.meeting-hint;
                                         color: #5f6470;
                                         font-size: 12px;

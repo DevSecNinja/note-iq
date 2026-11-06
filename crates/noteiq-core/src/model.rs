@@ -132,6 +132,7 @@ pub struct Capture {
     pub(crate) filename_meeting_slug: Option<String>,
     /// Fixed at the first save, so changing the setting never renames notes already saved.
     pub(crate) filename_template: Option<NoteFilename>,
+    pub(crate) restored_document: Option<crate::saved_note::RestoredDocument>,
 }
 
 impl Capture {
@@ -151,6 +152,7 @@ impl Capture {
             first_saved_at: None,
             filename_meeting_slug: None,
             filename_template: None,
+            restored_document: None,
         }
     }
 

@@ -24,7 +24,28 @@ Run the portable core tests on Linux x64 or ARM64 (including WSL):
 ```sh
 cargo test -p noteiq-core
 cargo fmt --all -- --check
+dprint check --allow-no-files
 ```
+
+### Commit hooks
+
+Install the tools pinned in `.mise.toml` (for example, `mise install`), and make
+`cargo`, `dprint`, and `lefthook` available on your PATH. Run `lefthook install`
+after cloning: the tracked `.lefthook.toml` alone does not activate Git hooks.
+The pre-commit hook checks Rust and Markdown formatting and blocks the commit
+if either check fails or a required tool is missing. Use `cargo fmt --all` and
+`dprint fmt` to fix formatting before retrying.
+
+For an isolated linked worktree, keep its hooks separate from other checkouts:
+
+```sh
+git config extensions.worktreeConfig true
+git config --worktree core.hooksPath .git-hooks
+lefthook install
+```
+
+Repeat installation in each worktree that needs hooks. `.git-hooks` contains
+generated local hooks and is not committed.
 
 Run the Windows UI acceptance tests natively on Windows:
 

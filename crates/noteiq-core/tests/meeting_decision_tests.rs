@@ -16,6 +16,17 @@ fn next_meeting() -> Meeting {
     next
 }
 
+#[test]
+fn a_series_identity_does_not_refresh_a_written_note_into_another_occurrence() {
+    let mut capture = capture();
+    capture.set_body("Keep the first occurrence");
+    apply_automatic_selection(&mut capture, auto_connected(meeting()));
+    let mut later = next_meeting();
+    later.id = meeting().id;
+    apply_automatic_selection(&mut capture, auto_connected(later));
+    assert_eq!(capture.meeting, Some(meeting()));
+}
+
 fn auto_connected(meeting: Meeting) -> MeetingSelection {
     MeetingSelection::Connected(meeting)
 }

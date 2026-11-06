@@ -242,7 +242,9 @@ pub fn save_capture(
     }
 
     let previous_path = capture.path.clone();
-    if let Some(path) = previous_path.as_ref()
+    check_restored_snapshot(capture)?;
+    if capture.restored_document.is_none()
+        && let Some(path) = previous_path.as_ref()
         && path.exists()
         && !file_belongs_to(path, capture.id)?
     {
@@ -252,7 +254,9 @@ pub fn save_capture(
     let current_meeting_slug = meeting_slug(capture);
     let path = match previous_path.as_ref() {
         Some(path)
-            if current_meeting_slug == capture.filename_meeting_slug || !template.uses_title() =>
+            if capture.restored_document.is_some()
+                || current_meeting_slug == capture.filename_meeting_slug
+                || !template.uses_title() =>
         {
             path.clone()
         }
@@ -269,29 +273,37 @@ pub fn save_capture(
             // updated note at its original path so the next save can retry safely.
             fs::rename(write_path, &path)?;
         }
-        Ok(())
+        Ok(contents)
     })();
 
-    if let Err(error) = result {
-        if reserved_new_path && let Err(cleanup_error) = fs::remove_file(&path) {
-            tracing::warn!(
-                failure_class = "filename_reservation_cleanup_failed",
-                error_kind = ?cleanup_error.kind(),
-                "Could not remove an unused filename reservation"
-            );
+    let contents = match result {
+        Ok(contents) => contents,
+        Err(error) => {
+            if reserved_new_path && let Err(cleanup_error) = fs::remove_file(&path) {
+                tracing::warn!(
+                    failure_class = "filename_reservation_cleanup_failed",
+                    error_kind = ?cleanup_error.kind(),
+                    "Could not remove an unused filename reservation"
+                );
+            }
+            return Err(error);
         }
-        return Err(error);
-    }
+    };
 
     capture.path = Some(path.clone());
     capture.updated_at = now;
     capture.first_saved_at.get_or_insert(now);
     capture.filename_meeting_slug = current_meeting_slug;
     capture.filename_template.get_or_insert(template);
+    crate::saved_note::advance_snapshot(capture, contents);
     Ok(Some(path))
 }
 
 pub fn finish_capture(capture: &mut Capture) -> Result<(), DestinationError> {
+    check_restored_snapshot(capture)?;
+    if capture.restored_document.is_some() {
+        return Ok(());
+    }
     if capture.is_empty()
         && let Some(path) = capture.path.as_ref()
     {
@@ -306,6 +318,20 @@ pub fn finish_capture(capture: &mut Capture) -> Result<(), DestinationError> {
             Err(error) => return Err(error.into()),
         }
         capture.path = None;
+    }
+    Ok(())
+}
+
+fn check_restored_snapshot(capture: &Capture) -> Result<(), DestinationError> {
+    if let (Some(document), Some(path)) = (&capture.restored_document, &capture.path) {
+        match fs::read_to_string(path) {
+            Ok(contents) if contents == document.text => {}
+            Ok(_) => return Err(DestinationError::ExternalConflict(path.clone())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(DestinationError::ExternalConflict(path.clone()));
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
     Ok(())
 }

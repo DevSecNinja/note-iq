@@ -2,6 +2,10 @@ use crate::model::{Capture, Meeting, MeetingDecision};
 use chrono::{DateTime, FixedOffset, TimeDelta};
 use std::collections::HashSet;
 
+pub fn same_occurrence(left: &Meeting, right: &Meeting) -> bool {
+    !left.id.trim().is_empty() && left.id == right.id && left.start == right.start
+}
+
 /// Meetings that start or ended within this window are offered alongside current ones.
 pub const CHOICE_WINDOW: TimeDelta = TimeDelta::minutes(15);
 /// All-day and multi-day events span at least this long and are never connected automatically.
@@ -52,7 +56,7 @@ fn ranked_choices(candidates: &[Meeting], now: DateTime<FixedOffset>) -> Vec<(Re
     let mut ranked = candidates
         .iter()
         .filter_map(|meeting| Some((relevance(meeting, now)?, meeting)))
-        .filter(|(_, meeting)| seen.insert(meeting.id.clone()))
+        .filter(|(_, meeting)| seen.insert((meeting.id.clone(), meeting.start)))
         .collect::<Vec<_>>();
     ranked.sort_by_key(|(rank, _)| *rank);
     ranked
@@ -79,7 +83,7 @@ pub fn browse_meetings(candidates: &[Meeting], now: DateTime<FixedOffset>) -> Ve
             if meeting.cancelled
                 || meeting.declined
                 || end <= start
-                || !seen.insert(meeting.id.clone())
+                || !seen.insert((meeting.id.clone(), meeting.start))
             {
                 return None;
             }
@@ -177,7 +181,7 @@ pub fn apply_automatic_selection(capture: &mut Capture, selection: MeetingSelect
                 || capture
                     .meeting
                     .as_ref()
-                    .is_some_and(|current| current.id == meeting.id) =>
+                    .is_some_and(|current| same_occurrence(current, &meeting)) =>
         {
             capture.meeting = Some(meeting);
         }
