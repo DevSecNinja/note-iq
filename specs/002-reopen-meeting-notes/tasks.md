@@ -9,39 +9,39 @@
 
 ## Phase 2: Foundational
 
-- [X] T002 Reuse the locked YAML parser in crates/noteiq-core/Cargo.toml and add restored-document state in crates/noteiq-core/src/model.rs
+- [x] T002 Reuse the locked YAML parser in crates/noteiq-core/Cargo.toml and add restored-document state in crates/noteiq-core/src/model.rs
 
 ## Phase 3: US1 - Resume a meeting note
 
 **Goal**: Restore saved text and identity through selection.
 **Independent test**: Resume a saved capture and save a current draft before switching.
 
-- [X] T003 [US1] Test saved-note restoration in crates/noteiq-core/tests/saved_note_tests.rs
-- [X] T004 [US1] Implement capture discovery and loading in crates/noteiq-core/src/saved_note.rs
-- [X] T005 [US1] Wire background selection, stale-result guards and safe switching in apps/noteiq-windows/src/ui.rs
-- [X] T006 [US1] Test successful switching, failed-save preservation and obsolete responses in apps/noteiq-windows/src/ui.rs
+- [x] T003 [US1] Test saved-note restoration in crates/noteiq-core/tests/saved_note_tests.rs
+- [x] T004 [US1] Implement capture discovery and loading in crates/noteiq-core/src/saved_note.rs
+- [x] T005 [US1] Wire background selection, stale-result guards and safe switching in apps/noteiq-windows/src/ui.rs
+- [x] T006 [US1] Test successful switching, failed-save preservation and obsolete responses in apps/noteiq-windows/src/ui.rs
 
 ## Phase 4: US2 - Distinct series occurrences
 
 **Goal**: Never mix series occurrences.
 **Independent test**: Same calendar identity, different start instants.
 
-- [X] T007 [US2] Test repeated titles, shared IDs, offset equivalence and duplicate ranking in crates/noteiq-core/tests/saved_note_tests.rs
-- [X] T008 [US2] Use occurrence-safe picker identity in apps/noteiq-windows/src/ui.rs
+- [x] T007 [US2] Test repeated titles, shared IDs, offset equivalence and duplicate ranking in crates/noteiq-core/tests/saved_note_tests.rs
+- [x] T008 [US2] Use occurrence-safe picker identity in apps/noteiq-windows/src/ui.rs
 
 ## Phase 5: US3 - Preserve vault edits
 
 **Goal**: Preserve refinements and reject external conflicts.
 **Independent test**: Edit in the vault before and after reopening.
 
-- [X] T009 [US3] Test refinements, custom YAML, No meeting and external conflicts in crates/noteiq-core/tests/saved_note_tests.rs
-- [X] T010 [US3] Preserve original document and path on save/finish in crates/noteiq-core/src/markdown.rs and crates/noteiq-core/src/destination.rs
+- [x] T009 [US3] Test refinements, custom YAML, No meeting and external conflicts in crates/noteiq-core/tests/saved_note_tests.rs
+- [x] T010 [US3] Preserve original document and path on save/finish in crates/noteiq-core/src/markdown.rs and crates/noteiq-core/src/destination.rs
 
 ## Phase 6: Polish
 
-- [X] T011 [P] Complete caption-collapse regression in apps/noteiq-windows/tests/ui_acceptance.rs
-- [X] T012 [P] Document reopening and supported layouts in docs/setup.md
-- [X] T013 Run native core/controller/UI tests, Clippy and formatting per specs/002-reopen-meeting-notes/quickstart.md
+- [x] T011 [P] Complete caption-collapse regression in apps/noteiq-windows/tests/ui_acceptance.rs
+- [x] T012 [P] Document reopening and supported layouts in docs/setup.md
+- [x] T013 Run native core/controller/UI tests, Clippy and formatting per specs/002-reopen-meeting-notes/quickstart.md
 
 ## Dependencies & Execution Order
 

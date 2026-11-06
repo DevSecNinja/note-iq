@@ -14,6 +14,7 @@ cargo test --locked -p noteiq-core -p noteiq-windows --features noteiq-windows/d
 cargo clippy --locked -p noteiq-windows --features desktop --all-targets --target aarch64-pc-windows-msvc --target-dir target\windows-native -- -D warnings
 cargo build --locked -p noteiq-windows --features desktop --release --target aarch64-pc-windows-msvc --target-dir target\windows-native
 cargo fmt --all -- --check
+dprint check --allow-no-files
 git diff --check
 ```
 

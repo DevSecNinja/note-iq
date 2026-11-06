@@ -1,4 +1,5 @@
 /target/
+/.git-hooks/
 **/*.rs.bk
 *.log
 .DS_Store

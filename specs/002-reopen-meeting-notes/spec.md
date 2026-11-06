@@ -8,7 +8,7 @@
 
 **Input**: User description: "Can you implement that opening previous meeting note feature please."
 
-## User Scenarios & Testing *(mandatory)*
+## User Scenarios & Testing _(mandatory)_
 
 ### User Story 1 - Resume a meeting note (Priority: P1)
 
@@ -75,7 +75,7 @@ save, and verify all other content is unchanged.
 - No meeting continues to detach the current note and updates persisted context.
 - An empty Notes section in a refined document must not delete its refinements.
 
-## Requirements *(mandatory)*
+## Requirements _(mandatory)_
 
 ### Functional Requirements
 
@@ -95,7 +95,7 @@ save, and verify all other content is unchanged.
 - **Saved capture**: Capture identity, file path, metadata and editable Notes.
 - **Original document**: Saved content retained for preservation/conflict checks.
 
-## Success Criteria *(mandatory)*
+## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes
 
