@@ -232,7 +232,7 @@ fn write_meeting_properties(
         if let Some(time) = time {
             output.push_str(&format!(
                 "{key}: {}\n",
-                clock.at(time).to_rfc3339_opts(SecondsFormat::Secs, false)
+                clock.at(time).to_rfc3339_opts(SecondsFormat::AutoSi, false)
             ));
         }
     }

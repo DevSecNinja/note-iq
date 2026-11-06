@@ -70,6 +70,8 @@ as before. Automatic attachment does not reopen files over your text.
 Recurring meetings are matched by calendar identity **and occurrence start**,
 not by title or series identity alone. When several captures exist for the same
 occurrence, the most recently updated one opens; the other files remain intact.
+Occurrence timestamps retain fractional seconds so precise calendar starts match
+their saved captures.
 The currently open saved occurrence is never reloaded over unsaved text.
 
 Reopening supports schema-4 captures with an editable `## Notes` section.
@@ -79,6 +81,9 @@ properties and other content before Notes are preserved, and reopened notes keep
 their original filename. External changes after reopening block save instead of
 being overwritten. Reopened notes with erased text are retained on close to
 avoid deleting refinements; newly created empty notes still delete on close.
+
+A saved-note lookup failure stays visible through typing and autosave until you
+retry the meeting selection, choose **No meeting**, or close the capture.
 
 ### Changing the capture shortcut
 

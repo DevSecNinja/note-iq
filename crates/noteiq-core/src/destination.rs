@@ -243,7 +243,8 @@ pub fn save_capture(
 
     let previous_path = capture.path.clone();
     check_restored_snapshot(capture)?;
-    if let Some(path) = previous_path.as_ref()
+    if capture.restored_document.is_none()
+        && let Some(path) = previous_path.as_ref()
         && path.exists()
         && !file_belongs_to(path, capture.id)?
     {

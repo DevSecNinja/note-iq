@@ -82,6 +82,7 @@ struct AppState {
     author: Option<String>,
     note_lookup_generation: u64,
     pending_note: Option<NoteRequest>,
+    note_lookup_error: Option<String>,
 }
 
 impl AppState {
@@ -109,6 +110,7 @@ impl AppState {
             author: None,
             note_lookup_generation: 0,
             pending_note: None,
+            note_lookup_error: None,
         };
         state.capture.capture.author = state.effective_author();
         state
@@ -133,6 +135,10 @@ impl AppState {
 
     fn save_settings(&self) -> Result<(), noteiq_core::settings::SettingsError> {
         self.settings.save(&self.settings_path)
+    }
+
+    fn display_status(&self) -> &str {
+        self.note_lookup_error.as_deref().unwrap_or(&self.status)
     }
 }
 
@@ -268,13 +274,12 @@ fn bind_callbacks(
         let state = state.clone();
         let ui_weak = ui_weak.clone();
         window.on_body_changed(move |text| {
-            state
-                .borrow_mut()
-                .capture
-                .edit(String::from(text), Instant::now());
+            let mut state = state.borrow_mut();
+            state.capture.edit(String::from(text), Instant::now());
+            state.status = "Unsaved changes".to_owned();
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_saved(false);
-                ui.set_status_text("Unsaved changes".into());
+                ui.set_status_text(state.display_status().into());
             }
         });
     }
@@ -771,6 +776,7 @@ fn close_capture_state(window: &MainWindow, state: &mut AppState) -> bool {
     }
     state.capture_open = false;
     state.pending_note = None;
+    state.note_lookup_error = None;
     state.status = "Capture closed.".to_owned();
     refresh_view(window, state);
     true
@@ -814,6 +820,7 @@ fn begin_capture(
     let timezone = iana_time_zone::get_timezone().unwrap_or_else(|_| "local".to_owned());
     state.capture = CaptureController::new(Capture::new(source, now, timezone));
     state.pending_note = None;
+    state.note_lookup_error = None;
     state.capture.capture.author = state.effective_author();
     state.capture_open = true;
     state.status = "Ready".to_owned();
@@ -944,6 +951,7 @@ fn request_meeting_note(
 ) {
     state.note_lookup_generation = state.note_lookup_generation.wrapping_add(1);
     state.pending_note = None;
+    state.note_lookup_error = None;
     let meeting = usize::try_from(index)
         .ok()
         .and_then(|position| position.checked_sub(1))
@@ -1053,7 +1061,7 @@ fn apply_meeting_note(
                 failure_class = "meeting_note_open_failed",
                 "Could not open meeting note"
             );
-            state.status = format!("Could not open the meeting note: {error}");
+            state.note_lookup_error = Some(format!("Could not open the meeting note: {error}"));
         }
     }
     update_meeting_view(window, state, now);
@@ -1162,7 +1170,7 @@ fn meeting_hint(state: &AppState) -> String {
 }
 
 fn refresh_view(window: &MainWindow, state: &AppState) {
-    window.set_status_text(state.status.clone().into());
+    window.set_status_text(state.display_status().into());
     window.set_meeting_hint(state.meeting_hint.clone().into());
     window.set_meeting_picker_enabled(!state.picker_meetings.is_empty());
     window.set_meeting_refresh_enabled(!state.lookup_pending);
@@ -1542,8 +1550,80 @@ mod tests {
         assert_eq!(state.capture.capture.id, id);
         assert_eq!(state.capture.capture.body, "Keep this draft");
         assert!(state.capture.is_dirty());
-        assert!(state.status.contains("Could not open the meeting note"));
+        assert!(
+            state
+                .display_status()
+                .contains("Could not open the meeting note")
+        );
         assert!(state.pending_note.is_none());
+    }
+
+    #[test]
+    fn lookup_error_survives_same_tick_autosave_and_typing_until_retry_or_cancellation() {
+        let (_folder, window, mut state, saved) = switching_fixture();
+        state.capture.edit(
+            "Draft ready for autosave",
+            Instant::now() - Duration::from_secs(30),
+        );
+        assert!(state.capture.autosave_due(Instant::now()));
+        let event = lookup_note(&window, &mut state, saved.meeting.as_ref().unwrap());
+        let AppEvent::MeetingNote(request, _) = event else {
+            panic!("expected saved-note response")
+        };
+        let state = Rc::new(RefCell::new(state));
+        let (lookup_sender, lookup_receiver) = mpsc::channel();
+        let (event_sender, events) = mpsc::channel();
+        let _timer = bind_callbacks(&window, &state, lookup_sender, None, None, None, events);
+        event_sender
+            .send(AppEvent::MeetingNote(
+                request,
+                Err(SavedNoteError::InvalidCapture),
+            ))
+            .unwrap_or_else(|_| panic!("event channel closed"));
+        i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(201));
+        assert!(!state.borrow().capture.is_dirty());
+        assert!(state.borrow().status.starts_with("Saved "));
+        assert!(
+            window
+                .get_status_text()
+                .contains("Could not open the meeting note")
+        );
+        window.invoke_body_changed("More typing".into());
+        assert!(
+            window
+                .get_status_text()
+                .contains("Could not open the meeting note")
+        );
+
+        window.invoke_meeting_chosen(0);
+        assert!(state.borrow().note_lookup_error.is_none());
+        assert!(!window.get_status_text().contains("Could not open"));
+
+        let mut borrowed = state.borrow_mut();
+        let event = lookup_note(&window, &mut borrowed, saved.meeting.as_ref().unwrap());
+        let AppEvent::MeetingNote(request, _) = event else {
+            panic!("expected saved-note response")
+        };
+        apply_meeting_note(
+            &window,
+            &mut borrowed,
+            request,
+            Err(SavedNoteError::InvalidCapture),
+            fixed_now(),
+        );
+        assert!(borrowed.note_lookup_error.is_some());
+        let index = borrowed
+            .picker_meetings
+            .iter()
+            .position(|m| same_occurrence(m, saved.meeting.as_ref().unwrap()))
+            .unwrap()
+            + 1;
+        drop(borrowed);
+        window.invoke_meeting_chosen(index as i32);
+        assert!(state.borrow().note_lookup_error.is_none());
+        lookup_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
     }
 
     #[test]

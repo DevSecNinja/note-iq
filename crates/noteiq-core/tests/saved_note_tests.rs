@@ -388,3 +388,138 @@ fn repeated_saves_with_mixed_newlines_keep_the_notes_boundary_and_author_changes
     assert_eq!(text.matches("\nfrom:").count(), 1);
     assert!(text.contains("**From:** [[Third User]]"));
 }
+
+#[test]
+fn restored_uuid_quoting_does_not_block_saving_or_finishing() {
+    for quote in ["", "'"] {
+        let vault = tempdir().unwrap();
+        let destination = Destination::new(vault.path().into());
+        let original = save(&destination, meeting("event", now()), "Text");
+        let path = original.path.as_ref().unwrap();
+        let text = fs::read_to_string(path).unwrap().replace(
+            &format!("id: \"{}\"", original.id),
+            &format!("id: {quote}{}{quote}", original.id),
+        );
+        fs::write(path, text).unwrap();
+        let mut restored = find_meeting_note(&destination, original.meeting.as_ref().unwrap())
+            .unwrap()
+            .unwrap();
+        restored.set_body("Continued");
+        save_capture(&mut restored, &destination, now()).unwrap();
+        finish_capture(&mut restored).unwrap();
+        assert_eq!(restored.path, original.path);
+        assert_eq!(
+            find_meeting_note(&destination, original.meeting.as_ref().unwrap())
+                .unwrap()
+                .unwrap()
+                .body,
+            "Continued\n"
+        );
+    }
+}
+
+#[test]
+fn fractional_second_occurrences_round_trip_at_full_precision() {
+    for fraction in [".123", ".123456", ".123456789"] {
+        let vault = tempdir().unwrap();
+        let destination = Destination::new(vault.path().into());
+        let start =
+            DateTime::parse_from_rfc3339(&format!("2026-11-06T09:00:00{fraction}+01:00")).unwrap();
+        let event = meeting("event", start);
+        let original = save(&destination, event.clone(), "Text");
+        let mut restored = find_meeting_note(&destination, &event).unwrap().unwrap();
+        assert_eq!(restored.id, original.id);
+        let text = fs::read_to_string(original.path.as_ref().unwrap()).unwrap();
+        assert!(text.contains(&format!(
+            "meeting_start: 2026-11-06T09:00:00{fraction}+01:00"
+        )));
+        assert!(text.contains(&format!("meeting_end: 2026-11-06T09:30:00{fraction}+01:00")));
+        restored.set_body("Continued");
+        save_capture(&mut restored, &destination, now()).unwrap();
+        assert_eq!(
+            find_meeting_note(&destination, &event).unwrap().unwrap().id,
+            original.id
+        );
+        assert!(
+            find_meeting_note(&destination, &meeting("event", now()))
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[test]
+fn multiline_updated_values_are_replaced_without_stale_continuations() {
+    for marker in [">-", "|-"] {
+        let vault = tempdir().unwrap();
+        let destination = Destination::new(vault.path().into());
+        let original = save(&destination, meeting("event", now()), "Text");
+        let path = original.path.as_ref().unwrap();
+        let text = fs::read_to_string(path).unwrap().replace(
+            "updated: 2026-11-06T09:00:00.000+01:00\n",
+            &format!(
+                "updated: {marker} # Keep inline comment\n  2026-11-06T09:00:00.000+01:00\n# Keep timestamp comment\n"
+            ),
+        );
+        fs::write(path, text).unwrap();
+        let mut restored = find_meeting_note(&destination, original.meeting.as_ref().unwrap())
+            .unwrap()
+            .unwrap();
+        restored.set_body("Continued");
+        let updated = now() + TimeDelta::minutes(1);
+        save_capture(&mut restored, &destination, updated).unwrap();
+        let text = fs::read_to_string(path).unwrap();
+        assert!(!text.contains("\n  2026-11-06T09:00:00.000+01:00"));
+        assert_eq!(text.matches("# Keep timestamp comment").count(), 1);
+        assert_eq!(text.matches("# Keep inline comment").count(), 1);
+        assert_eq!(
+            find_meeting_note(&destination, original.meeting.as_ref().unwrap())
+                .unwrap()
+                .unwrap()
+                .updated_at,
+            updated
+        );
+    }
+}
+
+#[test]
+fn missing_summary_keeps_regenerated_meeting_details_before_editable_notes() {
+    let vault = tempdir().unwrap();
+    let destination = Destination::new(vault.path().into());
+    let original = save(&destination, meeting("event", now()), "Text");
+    let path = original.path.as_ref().unwrap();
+    let text = fs::read_to_string(path)
+        .unwrap()
+        .replace("## Summary\n\n## Follow-ups\n\n---\n\n", "");
+    fs::write(path, text).unwrap();
+    let mut restored = find_meeting_note(&destination, original.meeting.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    restored.disconnect();
+    save_capture(&mut restored, &destination, now()).unwrap();
+    let replacement = meeting("replacement", now() + TimeDelta::minutes(30));
+    restored.connect(replacement.clone());
+    save_capture(&mut restored, &destination, now()).unwrap();
+    let text = fs::read_to_string(path).unwrap();
+    assert!(text.find("## Meeting details").unwrap() < text.find("## Notes").unwrap());
+    let mut reopened = find_meeting_note(&destination, &replacement)
+        .unwrap()
+        .unwrap();
+    assert_eq!(reopened.body, "Text\n");
+    reopened.set_body("Continued");
+    save_capture(&mut reopened, &destination, now()).unwrap();
+    assert_eq!(
+        fs::read_to_string(path)
+            .unwrap()
+            .matches("## Notes")
+            .count(),
+        1
+    );
+    assert_eq!(
+        find_meeting_note(&destination, &replacement)
+            .unwrap()
+            .unwrap()
+            .body,
+        "Continued\n"
+    );
+}

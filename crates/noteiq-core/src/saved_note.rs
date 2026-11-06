@@ -331,9 +331,23 @@ pub(crate) fn render_restored(capture: &Capture, fresh: &str) -> String {
                 .find(|(key, _)| *key == "updated")
                 .unwrap()
                 .1;
-            properties.push_str(&replacement.replace('\n', newline));
-            if let Some((_, remainder)) = block.split_once('\n') {
-                properties.push_str(remainder);
+            if let Some(comment) = block
+                .lines()
+                .next()
+                .and_then(|line| line.find(" #").map(|at| &line[at..]))
+            {
+                properties.push_str(replacement.trim_end());
+                properties.push_str(comment.trim_end());
+                properties.push_str(newline);
+            } else {
+                properties.push_str(&replacement.replace('\n', newline));
+            }
+            for line in block
+                .split_inclusive('\n')
+                .skip(1)
+                .filter(|line| line.trim_start().starts_with('#'))
+            {
+                properties.push_str(line);
             }
         } else if !(changed_meeting && MEETING_KEYS.contains(&key)
             || changed_author && key == "from")
@@ -406,7 +420,7 @@ pub(crate) fn render_restored(capture: &Capture, fresh: &str) -> String {
                 .map_or(fresh.len(), |section| section.0);
             let insert = headings(&prefix)
                 .into_iter()
-                .find(|(_, _, heading)| *heading == "## Summary")
+                .find(|(_, _, heading)| matches!(*heading, "## Summary" | "## Notes"))
                 .map(|section| section.0)
                 .unwrap_or(prefix.len());
             prefix.insert_str(insert, &fresh[start..end].replace('\n', newline));
