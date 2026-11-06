@@ -43,17 +43,10 @@ pub fn meeting() -> Meeting {
     }
 }
 
-/// Returns the newline-terminated text stored in a note's frozen "Raw capture" block.
+/// Returns the newline-terminated text in the editable Notes section.
 #[allow(dead_code)]
 pub fn raw_capture(note: &str) -> &str {
-    const RAW_CAPTURE_OPEN: &str =
-        "<!-- ⛔ Verbatim, as typed in NoteIQ. Never edited after capture. -->\n\n";
-    let start = note
-        .find(RAW_CAPTURE_OPEN)
-        .expect("note has a raw capture block")
-        + RAW_CAPTURE_OPEN.len();
-    let text = note[start..]
-        .strip_suffix("</details>\n")
-        .expect("the raw capture block ends the note");
-    text.strip_suffix('\n').unwrap_or(text)
+    note.split_once("\n## Notes\n\n")
+        .expect("note has an editable Notes section")
+        .1
 }

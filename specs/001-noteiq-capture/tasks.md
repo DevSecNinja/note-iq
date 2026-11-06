@@ -195,6 +195,13 @@ correlation IDs while asserting note bodies and meeting values are absent.
 - [x] T084 Validate local x64-under-emulation, ARM64, and WSL Clippy/tests/builds; verify PE machine values `8664`/`AA64`; pass `yamlfmt -lint`, `yamllint`, `actionlint`, and `zizmor --offline`; scan source with Gitleaks; exercise offline packaging with both real binaries and verify ZIP contents, architecture IDs, SHA-256 values, and tag/ref/published-release guard rejection cases.
 - [x] T085 Run `yamlfmt -lint` and `yamllint` against the workflow/configuration YAML and resolve findings.
 - [ ] T086 After Release Please App/repository permissions are configured, run hosted CI and validate a tag-bound release retry end to end; no remote run is claimed until authorized.
+- [x] T087 Supersede T070's collapsed Raw capture with schema 4's ordinary editable Notes section in `crates/noteiq-core/src/markdown.rs`; preserve user-authored Markdown, update golden fixtures and layout regressions, and leave existing vault files untouched.
+- [x] T088 Suppress WorkIQ console windows on Windows in `crates/noteiq-core/src/workiq.rs`, with real console-executable and `.cmd` MCP regression fixtures in `crates/noteiq-core/tests/workiq_process_tests.rs`.
+- [x] T089 Preserve translated US-International dead-key text when it differs from Slint's logical key in `apps/noteiq-windows/src/keyboard.rs`; cover punctuation, accents, and ordinary shortcut handling with keyboard unit tests and editor acceptance tests.
+- Native isolated-window verification of T089 on the US-International layout confirms
+  apostrophe+Space, apostrophe+E, apostrophe+X, doublequote+Space, and ordinary typing.
+  The production handler was used without starting another full NoteIQ instance.
+  The patched ARM64 release is built; the existing main runtime remains unchanged.
 
 ## Dependencies and Execution Order
 

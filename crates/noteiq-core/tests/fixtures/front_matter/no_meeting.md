@@ -12,7 +12,7 @@ id: "00000000-0000-4000-8000-000000000042"
 updated: 2026-11-03T14:20:00.000+01:00
 timezone: "Europe/Amsterdam"
 captured_via: shortcut
-noteiq_schema: 3
+noteiq_schema: 4
 ---
 
 # Decision: ship the beta.
@@ -20,7 +20,7 @@ noteiq_schema: 3
 **From:** [[Alex Example]] · **Captured:** 2026-11-03 14:15
 
 <!-- Captured with NoteIQ. Ask the assistant to "refine this note" to add a Summary and
-     Follow-ups — the Raw capture block stays frozen as non-AI evidence. -->
+     Follow-ups. Notes below are editable Markdown. -->
 
 ## Summary
 
@@ -28,13 +28,8 @@ noteiq_schema: 3
 
 ---
 
-<details>
-<summary>Raw capture (frozen — evidence, non-AI)</summary>
-
-<!-- ⛔ Verbatim, as typed in NoteIQ. Never edited after capture. -->
+## Notes
 
 Decision: ship the beta.
 
 - [ ] Send the deck to Sam
-
-</details>

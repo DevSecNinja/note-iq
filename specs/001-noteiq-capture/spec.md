@@ -344,11 +344,12 @@ existing Release Please draft is published without creating a second release.
   timestamp, folder, or note ID, overwriting another note, or leaving a duplicate.
   Body edits alone MUST NOT rename an already-saved note. Closed notes and vault
   links MUST NOT be bulk-modified.
-- **FR-027**: System MUST write notes in the vault's capture layout (schema 3):
+- **FR-027**: System MUST write notes in the vault's capture layout (schema 4):
   vault properties first, then meeting properties, then NoteIQ bookkeeping; a
   body with an escaped title, a From/Captured line, Meeting details, empty
-  Summary and Follow-ups sections, and the user's text verbatim in a collapsed
-  Raw capture block. Meeting times MUST use the capture's named time zone at
+  Summary and Follow-ups sections, and the user's text verbatim under Notes as
+  ordinary editable Markdown, without a generated HTML wrapper or code fence.
+  Meeting times MUST use the capture's named time zone at
   each instant. Existing notes MUST NOT be migrated.
 - **FR-028**: System MUST record the note taker as a `from` wikilink from the
   Windows display name, looked up without delaying the editor, or from an
@@ -409,7 +410,7 @@ existing Release Please draft is published without creating a second release.
 - **Note filename template**: A user setting combining `{date}`, `{time}`, and
   `{title}` that names new notes inside `captures/YYYY/MM/`.
 - **Saved note**: A Markdown document identified by a stable note ID and its current path,
-  containing schema 3 metadata, a generated layout, and the user's text verbatim.
+  containing schema 4 metadata, a generated layout, and the user's text verbatim.
 - **Integration state**: WorkIQ discovery, availability, authentication, and
   error state that remains independent of editor usability.
 

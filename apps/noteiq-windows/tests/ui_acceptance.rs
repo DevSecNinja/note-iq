@@ -279,6 +279,21 @@ fn settings_fit_without_discarding_the_note_or_selected_meeting() {
 }
 
 #[test]
+fn note_editor_preserves_apostrophes_quotes_and_composed_text() {
+    let window = open_window();
+    let edits = record_edits(&window);
+    let text = "I'm writing 'notes', \"quotes\", café and naïve.";
+
+    type_text(&window, text);
+    // A non-composing dead-key sequence can commit multiple characters at once.
+    key(&window, "'x".into());
+
+    let expected = format!("{text}'x");
+    assert_eq!(window.get_note_text().as_str(), expected);
+    assert_eq!(edits.borrow().last(), Some(&expected));
+}
+
+#[test]
 fn note_editor_has_keyboard_focus_when_the_window_opens() {
     let window = open_window();
     let edits = record_edits(&window);

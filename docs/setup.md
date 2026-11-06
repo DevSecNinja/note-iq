@@ -144,8 +144,8 @@ need updating; NoteIQ does not rewrite vault links or rename closed notes.
 
 ### Note layout
 
-New notes follow the vault's capture template (`_templates/capture.md`) and are
-marked `noteiq_schema: 3`. Notes written by earlier versions are never migrated
+New notes use the vault's capture properties with an editable Notes section and are
+marked `noteiq_schema: 4`. Notes written by earlier versions are never migrated
 or rewritten.
 
 The front matter starts with the vault's properties: `kind: capture`,
@@ -162,7 +162,10 @@ else "Quick note"), a **From** and **Captured** line, and a comment explaining
 how to refine the note. With a meeting attached, **Meeting details** lists the
 time and duration, organizer, your RSVP, and invitees. Empty **Summary** and
 **Follow-ups** sections are left for later refinement, and your text is kept
-verbatim in a collapsed **Raw capture** block, frozen as non-AI evidence.
+verbatim under **Notes** as ordinary Markdown, with no collapsed HTML wrapper or
+generated code fence. Lists, checkboxes, links, and formatting remain editable in
+Obsidian's Live Preview. Finish the capture in NoteIQ before editing its file in
+Obsidian, since NoteIQ continues autosaving an open capture.
 Titles and calendar text are escaped so they display literally.
 
 `from` uses your Windows display name, looked up in the background when NoteIQ
@@ -213,7 +216,8 @@ The corresponding x64 path is:
 %LOCALAPPDATA%\Programs\Microsoft Scout\resources\app.asar.unpacked\node_modules\@microsoft\workiq\bin\win-x64\workiq.exe
 ```
 
-It invokes that executable directly using the MCP stdio interface. NoteIQ does
+It invokes that executable in the background without opening a terminal window,
+using the MCP stdio interface. NoteIQ does
 not install, download, or copy WorkIQ. If no compatible executable is found, or
 its MCP schema does not expose a compatible Meetings search, the meeting hint
 explains that context is unavailable; note editing and saving continue to

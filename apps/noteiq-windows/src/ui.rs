@@ -131,6 +131,7 @@ pub fn run(
 ) -> Result<(), slint::PlatformError> {
     slint::BackendSelector::new()
         .backend_name("winit".into())
+        .with_winit_custom_application_handler(crate::keyboard::ComposedTextInput::default())
         .select()?;
     let window = MainWindow::new()?;
     let state = Rc::new(RefCell::new(AppState::new(settings, settings_path, source)));

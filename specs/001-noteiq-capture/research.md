@@ -144,18 +144,20 @@
 - **Alternatives considered**: Use Debian stable's older Rust package or claim a
   Linux test as proof of the Windows ARM64 build.
 
-### Vault capture layout (schema 3)
+### Vault capture layout (schema 4)
 
 - **Decision**: Match the vault's existing hand-made captures: Obsidian
   properties first (`kind`, `source`, `from`, `date`, `captured`, `processing`,
   `ai_refined`, `status`, `tags`), meeting properties next, NoteIQ bookkeeping
   last; a body with title, From/Captured line, Meeting details, empty Summary
   and Follow-ups sections for later Copilot refinement, and the user's text
-  verbatim in a collapsed Raw capture block. Escape titles and calendar text,
+  verbatim under an editable Notes heading, without HTML wrappers or generated
+  code fences. This supersedes schema 3's frozen Raw capture block, which made
+  editing in Obsidian inconvenient. Escape titles and calendar text,
   and show meeting times in the named time zone at each instant.
 - **Rationale**: Notes sit alongside existing captures and account notes, so
   shared properties make them filterable together, and Copilot can refine
-  them in place without losing the original wording.
+  them in place, while manual notes stay editable directly in Obsidian.
 - **Alternatives considered**: Keep schema 2's nested invitee objects (shown
   poorly in Obsidian's Properties view), migrate existing notes (risks
   overwriting vault edits), or wikilink every invitee (deferred).

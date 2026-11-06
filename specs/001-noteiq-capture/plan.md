@@ -82,7 +82,7 @@ notes, one optional WorkIQ child process for bounded meeting lookups.
 - `model.rs`: capture, meeting, source, save and connection states.
 - `capture.rs`: capture controller tying edits, meeting changes, and autosave
   to save state.
-- `markdown.rs`: schema 3 vault capture layout, YAML quoting, title/calendar
+- `markdown.rs`: schema 4 vault capture layout with editable Notes, YAML quoting, title/calendar
   escaping, DST-aware meeting times.
 - `destination.rs`: selected-root resolution, safe slug, collision reservation,
   note-ID ownership check, atomic write, empty-note close cleanup.
