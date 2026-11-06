@@ -65,6 +65,35 @@ save, and verify all other content is unchanged.
 2. **Given** an external edit after reopening, **When** save or empty-note cleanup
    is attempted, **Then** the external content is not overwritten or deleted.
 
+### User Story 4 - Confirm meeting changes on saved notes (Priority: P1)
+
+When a saved note is already connected to a meeting, choosing a different meeting
+asks whether to move the existing note to that meeting or start a separate,
+empty note for it.
+
+**Why this priority**: A meeting change should not silently file existing notes
+under a different meeting.
+
+**Independent Test**: Select a different meeting from a saved meeting note and
+verify that changing the meeting preserves the current note, while creating a
+new note saves the original and opens an empty capture for the selected meeting.
+
+**Acceptance Scenarios**:
+
+1. **Given** a saved note connected to one meeting, **When** another meeting is
+   selected, **Then** a confirmation offers **Change meeting** and
+   **Create new note** without replacing the note text.
+2. **Given** the confirmation, **When** **Change meeting** is chosen, **Then**
+   the same note and text remain open with the newly selected meeting.
+3. **Given** the confirmation, **When** **Create new note** is chosen, **Then**
+   the current note is safely saved and a blank note opens for the selected
+   meeting.
+4. **Given** the confirmation, **When** it is cancelled, **Then** the current
+   note and its meeting remain unchanged.
+5. **Given** saving the current note fails, **When** **Create new note** is
+   chosen, **Then** the current note remains open and the confirmation remains
+   available for retry or cancellation.
+
 ### Edge Cases
 
 - Unavailable destination, unreadable candidate, malformed matching capture,
@@ -74,6 +103,9 @@ save, and verify all other content is unchanged.
 - Selecting the active saved occurrence must not reload over unsaved text.
 - No meeting continues to detach the current note and updates persisted context.
 - An empty Notes section in a refined document must not delete its refinements.
+- Switching from a saved meeting note to a different meeting requires an
+  explicit choice before changing the current note's context or creating a new
+  note.
 
 ## Requirements _(mandatory)_
 
@@ -88,6 +120,9 @@ save, and verify all other content is unchanged.
 - **FR-006**: Keep meeting selection and autosave consistent after reopening.
 - **FR-007**: Show/log lookup and reopening failures without exposing note bodies.
 - **FR-008**: Do not add routine informational captions or a second destination.
+- **FR-009**: When a saved, meeting-linked note is switched to a different
+  meeting, ask whether to change the meeting on that note or create a separate
+  blank note; cancelling leaves the current note unchanged.
 
 ### Key Entities
 
@@ -103,6 +138,9 @@ save, and verify all other content is unchanged.
 - **SC-002**: All switching failure scenarios preserve 100% of the current draft.
 - **SC-003**: All recurring-occurrence scenarios restore the correct file.
 - **SC-004**: Saving a reopened note preserves all unrelated document content.
+- **SC-005**: Changing the selected meeting from a saved note never silently
+  carries its text into a new meeting; the user explicitly chooses whether to
+  keep the note and change its meeting or start a blank note.
 
 ## Assumptions
 

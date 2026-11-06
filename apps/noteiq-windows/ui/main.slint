@@ -27,6 +27,7 @@ export component MainWindow inherits Window {
     in-out property <int> meeting-index: 0;
     in-out property <bool> meeting-picker-enabled: false;
     in-out property <bool> meeting-refresh-enabled: true;
+    in-out property <bool> meeting-change-confirmation-visible: false;
     in-out property <bool> saved: false;
     in-out property <bool> has-note: false;
     in-out property <bool> settings-visible: false;
@@ -45,6 +46,8 @@ export component MainWindow inherits Window {
     callback meeting-refresh-requested();
     // Only user choices in the picker call this; setting meeting-index from code does not.
     callback meeting-chosen(int);
+    callback meeting-change-confirmed(int);
+    callback meeting-change-cancelled();
     callback settings-requested(bool);
     callback destination-requested();
     callback auto-connect-changed(bool);
@@ -70,6 +73,12 @@ export component MainWindow inherits Window {
         forward-focus: note-editor;
 
         key-pressed(event) => {
+            if root.meeting-change-confirmation-visible {
+                if event.text == "Escape" {
+                    root.meeting-change-cancelled();
+                }
+                accept
+            }
             if event.modifiers.control && (event.text == "s" || event.text == "S") {
                 root.save-requested();
                 accept
@@ -428,6 +437,61 @@ export component MainWindow inherits Window {
                                 text: "Done";
                                 clicked => { root.close-settings(); }
                             }
+                        }
+                    }
+                }
+            }
+
+            if root.meeting-change-confirmation-visible: Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                background: #20232a;
+                opacity: 0.38;
+            }
+
+            if root.meeting-change-confirmation-visible: Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                width: 460px;
+                height: 190px;
+                background: #ffffff;
+                border-radius: 14px;
+                border-width: 1px;
+                border-color: #d7d9de;
+
+                VerticalLayout {
+                    padding: 22px;
+                    spacing: 16px;
+
+                    Text {
+                        text: "You are about to change the meeting for this note. Do you want to change it or create a new note?";
+                        color: #20232a;
+                        font-family: "Segoe UI Variable";
+                        font-size: 15px;
+                        wrap: word-wrap;
+                        vertical-stretch: 1;
+                    }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+
+                        Button {
+                            text: "Cancel";
+                            accessible-label: "Cancel";
+                            clicked => { root.meeting-change-cancelled(); }
+                        }
+                        Button {
+                            text: "Change meeting";
+                            accessible-label: "Change meeting";
+                            clicked => { root.meeting-change-confirmed(0); }
+                        }
+                        Button {
+                            text: "Create new note";
+                            accessible-label: "Create new note";
+                            clicked => { root.meeting-change-confirmed(1); }
                         }
                     }
                 }

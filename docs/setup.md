@@ -65,7 +65,10 @@ Selecting a meeting opens its existing saved NoteIQ capture, if one exists in
 the selected destination's `captures/YYYY/MM` history. The current draft is saved
 under its original meeting before switching; a failed save leaves it open.
 Without an existing capture, selecting a meeting attaches it to the current note
-as before. Automatic attachment does not reopen files over your text.
+as before. When a saved note is already connected to a meeting, selecting a
+different meeting asks whether to change the meeting on the current note or save
+it and create a blank note for the selected meeting. Cancel keeps the current
+note unchanged. Automatic attachment does not reopen files over your text.
 
 Recurring meetings are matched by calendar identity **and occurrence start**,
 not by title or series identity alone. When several captures exist for the same
@@ -355,8 +358,11 @@ cancelled meetings are not listed, although a meeting already attached to the
 note stays listed even if a later lookup no longer returns it. Until a lookup
 finds meetings, the list only offers **No meeting** and is unavailable.
 
-Choosing an entry attaches it at once; choosing **No meeting** removes all
-meeting and invitee fields from the saved note without changing its text or ID.
+Choosing an entry attaches it at once unless a saved note is already connected
+to another meeting, in which case NoteIQ asks whether to change the meeting on
+the existing note or create a blank note for the selected meeting. Choosing
+**No meeting** removes all meeting and invitee fields from the saved note
+without changing its text or ID.
 With the list closed, the arrow keys step through the entries; with it open,
 **Enter** chooses and **Escape** closes it without a change. Each change is
 saved after the usual 800 ms autosave pause, so stepping through the list does

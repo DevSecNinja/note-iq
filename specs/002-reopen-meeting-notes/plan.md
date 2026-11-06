@@ -8,6 +8,8 @@
 Read saved captures in the selected destination on a background worker. Restore
 the selected occurrence only after the current capture saves/finishes successfully.
 Keep the original document to preserve refinements and detect external changes.
+When changing meetings from a saved note, present an explicit choice to change
+the current note's meeting or save it and start a blank note for the new meeting.
 
 ## Technical Context
 
@@ -33,8 +35,9 @@ coverage. Existing controls suffice; no new significant UI surface.
 - `crates/noteiq-core/src/{model,markdown,destination}.rs`: restored document lifecycle
 - `crates/noteiq-core/tests/saved_note_tests.rs`: persistence regressions
 - `apps/noteiq-windows/src/ui.rs`: asynchronous selection and safe editor replacement
-- `apps/noteiq-windows/tests/ui_acceptance.rs`: caption layout regression
-- `docs/setup.md`: selection behavior and limitations
+- `apps/noteiq-windows/ui/main.slint`: accessible meeting-change confirmation
+- `apps/noteiq-windows/tests/ui_acceptance.rs`: dialog interaction regression
+- `docs/setup.md`: selection behavior, confirmation and limitations
 
 ## Complexity Tracking
 

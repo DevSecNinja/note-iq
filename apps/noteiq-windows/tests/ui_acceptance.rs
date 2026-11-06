@@ -365,6 +365,39 @@ fn new_note_button_uses_the_same_action_as_ctrl_n_without_directly_erasing_text(
         &element(&window, "New note", AccessibleRole::Button),
     );
 }
+
+#[test]
+fn meeting_change_confirmation_offers_change_new_and_cancel_actions() {
+    let window = open_window();
+    let actions = Rc::new(RefCell::new(Vec::new()));
+    let action_sink = actions.clone();
+    window.on_meeting_change_confirmed(move |action| {
+        action_sink.borrow_mut().push(action);
+    });
+    let cancellations = counter();
+    window.on_meeting_change_cancelled(increment(&cancellations));
+    let prompt = "You are about to change the meeting for this note. Do you want to change it or create a new note?";
+
+    assert!(!shows_text(&window, prompt));
+    window.set_meeting_change_confirmation_visible(true);
+    settle();
+    assert!(shows_text(&window, prompt));
+
+    for label in ["Change meeting", "Create new note", "Cancel"] {
+        let button = element(&window, label, AccessibleRole::Button);
+        assert_inside_window(&window, &button);
+    }
+
+    click_button(&window, "Change meeting");
+    assert_eq!(*actions.borrow(), vec![0]);
+
+    click_button(&window, "Create new note");
+    assert_eq!(*actions.borrow(), vec![0, 1]);
+
+    click_button(&window, "Cancel");
+    assert_eq!(cancellations.get(), 1);
+}
+
 #[test]
 fn starting_a_new_note_clears_text_typed_into_the_editor() {
     let window = open_window();
