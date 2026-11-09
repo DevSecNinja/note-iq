@@ -13,9 +13,11 @@ import argparse
 import json
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+SERIAL_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/DevSecNinja/note-iq")
 MANIFEST = ROOT / "apps" / "noteiq-windows" / "Cargo.toml"
 PACKAGE = "noteiq-windows"
 FEATURES = "desktop"
@@ -74,6 +76,23 @@ def prune(bom: dict, keep: set[tuple[str, str]]) -> dict:
     return bom
 
 
+def with_serial_number(bom: dict) -> dict:
+    """Adds a serial number derived from the SBOM contents.
+
+    `actions/attest` rejects CycloneDX without `serialNumber`, and cargo-cyclonedx omits
+    it when SOURCE_DATE_EPOCH is set. A content-derived UUID keeps the SBOM reproducible.
+    """
+    content = {key: value for key, value in bom.items() if key != "serialNumber"}
+    canonical = json.dumps(content, sort_keys=True, separators=(",", ":"))
+    serial = f"urn:uuid:{uuid.uuid5(SERIAL_NAMESPACE, canonical)}"
+    result = {}
+    for key, value in content.items():
+        result[key] = value
+        if key == "specVersion":
+            result["serialNumber"] = serial
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--tag", required=True, help="Release tag, for example v0.2.0")
@@ -92,6 +111,7 @@ def main() -> int:
         missing = sorted(keep - listed - {root})
         if missing:
             raise SystemExit(f"The {arch} SBOM is missing release crates: {missing}")
+        bom = with_serial_number(bom)
         path = args.output / f"noteiq-{args.tag}-windows-{arch}.cdx.json"
         path.write_text(json.dumps(bom, indent=2) + "\n", encoding="utf-8")
         print(f"{path.name}: {len(bom['components'])} components")
