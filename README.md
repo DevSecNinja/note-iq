@@ -17,6 +17,19 @@ open, its file follows meeting changes without losing its timestamp or
 overwriting other notes. Closed notes are never renamed, and a changed setting
 applies only to new notes.
 
+<p align="center">
+  <img src="docs/images/capture-window.png" alt="The NoteIQ capture window: a meeting list with New note, Open note, and Settings buttons above the note editor, and a Saved status line below it" width="480">
+</p>
+
+<p align="center">
+  <a href="docs/images/meeting-picker.png"><img src="docs/images/meeting-picker.png" alt="The meeting list, with two-line rows showing each meeting's time, title, and details" width="180"></a>
+  <a href="docs/images/new-note.png"><img src="docs/images/new-note.png" alt="An empty new note with the New note tooltip" width="180"></a>
+  <a href="docs/images/problems.png"><img src="docs/images/problems.png" alt="A WorkIQ sign-in hint and a save error with a Choose folder link" width="180"></a>
+  <a href="docs/images/settings.png"><img src="docs/images/settings.png" alt="The settings panel" width="180"></a>
+</p>
+
+<p align="center"><sub>Mockups. Select an image to enlarge it. Meetings and people are fictional.</sub></p>
+
 ## Build and test
 
 Run the portable core tests on Linux x64 or ARM64 (including WSL):
@@ -90,9 +103,10 @@ attestations do not remove the Windows SmartScreen warning.
 Start `noteiq.exe` to open a capture. While NoteIQ is running, use
 **Win+Shift+N** to show the capture window. If another app already owns that
 shortcut, choose one such as `Ctrl+Alt+N` in **Settings** and press **Enter**
-or **Done** to apply it. `Ctrl+S` saves without closing, **New note** or `Ctrl+N` starts
-another capture, and **Open note** opens the saved Markdown file with the
-registered application. Closing the window with its title-bar **×** saves the
+or **Done** to apply it. Notes save automatically, and `Ctrl+S` saves at once.
+The icon buttons next to the meeting list start a **New note** (also `Ctrl+N`),
+**Open note** in the registered Markdown application once it is saved, and open
+**Settings**. Closing the window with its title-bar **×** saves the
 note, deletes it if it is empty, and keeps NoteIQ in the tray; use the tray
 menu to show the window, start a new note, or quit.
 
@@ -102,11 +116,12 @@ command `noteiq new` brings an open capture to the front, or starts a fresh
 capture when none is open.
 
 The **Meeting** list starts with **No meeting**, followed by current, earlier,
-and upcoming meetings with their dates and times. A note attaches automatically
+and upcoming meetings on two lines: the time and title, then details such as
+**Now**, how long the meeting runs, the organizer, and how many people are invited. A note attaches automatically
 when exactly one meeting is in progress, including one that starts while an
 empty note is open; a meeting you choose, or **No meeting**, is never replaced.
-The tray process retains the list between notes, and **Refresh** asks WorkIQ
-again. Saved meeting metadata groups required and optional invitees using
+The tray process retains the list between notes, and **Refresh meetings** at the
+bottom of the list asks WorkIQ again. Saved meeting metadata groups required and optional invitees using
 `Name <email>` values; the note body lists their RSVP and reported attendance.
 See [Choosing a meeting](docs/setup.md#choosing-a-meeting) and
 [Note layout](docs/setup.md#note-layout).

@@ -3,7 +3,8 @@ mod common;
 use chrono::DateTime;
 use common::{instant, meeting};
 use noteiq_core::meeting::{
-    MeetingSelection, choice_label, meeting_choices, meetings_in_progress, select_current_meeting,
+    MeetingSelection, choice_label, list_entry, meeting_choices, meetings_in_progress,
+    select_current_meeting,
 };
 use noteiq_core::model::Meeting;
 
@@ -179,6 +180,81 @@ fn explicit_all_day_events_are_not_auto_connected_across_spring_dst() {
         MeetingSelection::NoMeeting
     );
     assert!(choice_label(&event).ends_with("all day"));
+}
+
+#[test]
+fn list_entries_show_time_title_and_details_for_each_state() {
+    let mut current = timed("now", "14:00", "14:30");
+    current.organizer = Some("Alex Morgan <alex@contoso.com>".to_owned());
+    current.invitees = vec![common::invitee("A"), common::invitee("B")];
+    let entry = list_entry(&current, instant());
+    assert_eq!(
+        (
+            entry.time.as_str(),
+            entry.title.as_str(),
+            entry.details.as_str()
+        ),
+        (
+            "14:00",
+            "Project review",
+            "ends 14:30 · Alex Morgan · 2 people"
+        )
+    );
+    assert!(entry.now && !entry.past);
+
+    let ended = list_entry(&timed("ended", "09:00", "10:00"), instant());
+    assert_eq!(ended.details, "Ended 10:00 · Organizer · 1 person");
+    assert!(ended.past && !ended.now);
+
+    let mut later = timed("later", "15:35", "16:05");
+    later.your_rsvp = Some(noteiq_core::model::Rsvp::Tentative);
+    later.organizer = None;
+    later.invitees.clear();
+    let entry = list_entry(&later, instant());
+    assert_eq!(entry.details, "In 1 h 20 min · 30 min · Tentative");
+    assert!(!entry.now && !entry.past);
+
+    let mut tomorrow = timed("tomorrow", "09:00", "10:00");
+    tomorrow.start = tomorrow
+        .start
+        .map(|start| start + chrono::TimeDelta::days(1));
+    tomorrow.end = tomorrow.end.map(|end| end + chrono::TimeDelta::days(1));
+    assert!(
+        list_entry(&tomorrow, instant())
+            .details
+            .starts_with("Tomorrow · 1 h")
+    );
+    let mut friday = tomorrow.clone();
+    friday.start = friday.start.map(|start| start + chrono::TimeDelta::days(2));
+    friday.end = friday.end.map(|end| end + chrono::TimeDelta::days(2));
+    assert!(
+        list_entry(&friday, instant())
+            .details
+            .starts_with("Fri 6 Nov · 1 h")
+    );
+}
+
+#[test]
+fn list_entries_handle_all_day_untitled_and_other_offsets() {
+    let mut event = all_day("holiday");
+    event.organizer = None;
+    event.invitees.clear();
+    let entry = list_entry(&event, instant());
+    assert_eq!(
+        (entry.time.as_str(), entry.details.as_str()),
+        ("All day", "")
+    );
+    assert!(entry.now);
+
+    let mut untitled = meeting();
+    untitled.title = Some("  ".to_owned());
+    // 13:00 UTC is 14:00 in the note's +01:00 offset.
+    untitled.start = Some(DateTime::parse_from_rfc3339("2026-11-03T13:00:00+00:00").unwrap());
+    let entry = list_entry(&untitled, instant());
+    assert_eq!(
+        (entry.time.as_str(), entry.title.as_str()),
+        ("14:00", "Untitled meeting")
+    );
 }
 
 #[test]

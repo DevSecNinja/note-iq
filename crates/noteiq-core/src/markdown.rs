@@ -349,7 +349,7 @@ fn rsvp_label(rsvp: Rsvp) -> Option<&'static str> {
 }
 
 /// Shows a stored `Name <email>` contact by its name only.
-fn contact_name(contact: &str) -> &str {
+pub(crate) fn contact_name(contact: &str) -> &str {
     contact
         .strip_suffix('>')
         .and_then(|rest| rest.rfind(" <"))

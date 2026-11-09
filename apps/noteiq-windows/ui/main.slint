@@ -1,5 +1,472 @@
-import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, LineEdit, Palette, ScrollView, TextEdit } from "std-widgets.slint";
 export { Palette }
+
+/// One row of the meeting list. Row 0 is always "No meeting".
+export struct MeetingRow {
+    // The accessible name, for example `Design review · 04 Nov · 09:30–10:00`.
+    label: string,
+    time: string,
+    title: string,
+    details: string,
+    now: bool,
+    past: bool,
+}
+
+// Glyphs from Segoe Fluent Icons, which shares these code points with Segoe MDL2 Assets.
+global Icons {
+    out property <string> add: "\u{E710}";
+    out property <string> open: "\u{E8A7}";
+    out property <string> settings: "\u{E713}";
+    out property <string> refresh: "\u{E72C}";
+    out property <string> calendar: "\u{E787}";
+    out property <string> chevron: "\u{E70D}";
+    out property <string> folder: "\u{E8B7}";
+}
+
+component IconButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    in property <string> tip;
+    in property <string> icon-font;
+    in property <bool> checked;
+    callback clicked();
+
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    background: root.checked ? #dbe4fb : touch.has-hover ? #e7e9ee : transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.glyph;
+        font-family: root.icon-font;
+        font-size: 16px;
+        color: root.checked ? #1d4ed8 : #383b43;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+
+    if focus.has-focus: Rectangle {
+        border-radius: root.border-radius;
+        border-width: 2px;
+        border-color: #1d4ed8;
+    }
+
+    Tooltip {
+        text: @markdown("\{root.tip}");
+    }
+}
+
+component LinkButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    min-width: label.preferred-width;
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    label := Text {
+        text: root.text;
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+        accessible-role: none;
+    }
+
+    if focus.has-focus: Rectangle {
+        border-radius: 3px;
+        border-width: 1px;
+        border-color: #1d4ed8;
+    }
+}
+
+component MeetingListItem inherits Rectangle {
+    in property <MeetingRow> entry;
+    in property <bool> selected;
+    in property <bool> highlighted;
+    in property <int> index;
+    in property <int> count;
+    callback clicked();
+
+    border-radius: 6px;
+    background: root.selected ? #e8eefc : (root.highlighted || touch.has-hover) ? #f1f3f6 : #ffffff;
+    accessible-role: list-item;
+    accessible-label: root.entry.label;
+    accessible-description: root.entry.details;
+    accessible-item-selected: root.selected;
+    accessible-item-index: root.index;
+    accessible-item-count: root.count;
+    accessible-action-default => { root.clicked(); }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 12px;
+
+        Text {
+            width: 52px;
+            text: root.entry.time;
+            color: #5f6470;
+            font-size: 13px;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 1px;
+
+            Text {
+                text: root.entry.title;
+                color: root.entry.past ? #5f6470 : #20232a;
+                font-size: 14px;
+                overflow: elide;
+                min-width: 0px;
+                accessible-role: none;
+            }
+
+            if root.entry.now || root.entry.details != "": HorizontalLayout {
+                if root.entry.now: Text {
+                    text: "Now";
+                    color: #166534;
+                    font-size: 12px;
+                    font-weight: 600;
+                    accessible-role: none;
+                }
+                Text {
+                    text: root.entry.now && root.entry.details != "" ? " · " + root.entry.details : root.entry.details;
+                    color: #5f6470;
+                    font-size: 12px;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    accessible-role: none;
+                }
+            }
+        }
+    }
+}
+
+/// The meeting list: a picker showing the chosen meeting that opens two-line rows with the
+/// time, title, and details, followed by Refresh meetings.
+component MeetingPicker inherits Rectangle {
+    in property <[MeetingRow]> rows;
+    in-out property <int> current-index;
+    in property <bool> enabled: true;
+    in property <bool> checking;
+    in property <bool> refresh-enabled: true;
+    in property <string> icon-font;
+    // The list can be wider and taller than the picker itself.
+    in property <length> popup-width: root.width;
+    in property <length> popup-max-height: 400px;
+    callback chosen(int);
+    callback refresh-requested();
+
+    property <MeetingRow> current: root.rows[root.current-index];
+    property <bool> open;
+    // The keyboard position in the open list; rows.length is Refresh meetings.
+    property <int> highlight;
+    property <length> list-padding: 4px;
+    property <length> first-row-height: 36px;
+    property <length> row-height: 52px;
+    property <length> separator-height: 9px;
+    property <length> refresh-height: 40px;
+    property <length> rows-height: 2 * root.list-padding + root.first-row-height + Math.max(0, root.rows.length - 1) * root.row-height;
+    // Refresh meetings stays pinned below the rows, so it never scrolls out of view.
+    property <length> footer-height: root.separator-height + root.refresh-height + root.list-padding;
+
+    height: 34px;
+    min-width: 120px;
+    forward-focus: focus;
+    horizontal-stretch: 1;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: focus.has-focus || root.open ? #1d4ed8 : #c9ccd3;
+    background: #ffffff;
+    opacity: root.enabled ? 1 : 0.6;
+
+    accessible-role: combobox;
+    accessible-label: "Meeting";
+    accessible-value: root.current.label;
+    accessible-enabled: root.enabled;
+    accessible-expandable: true;
+    accessible-expanded: root.open;
+    accessible-action-expand => { root.show-list(); }
+
+    function show-list() {
+        if root.enabled {
+            root.highlight = root.current-index;
+            popup.show();
+        }
+    }
+
+    function choose(index: int) {
+        root.current-index = index;
+        popup.close();
+        root.chosen(index);
+    }
+
+    function row-top(index: int) -> length {
+        index <= 0 ? 0px : root.first-row-height + (index - 1) * root.row-height
+    }
+
+    function row-bottom(index: int) -> length {
+        root.row-top(index) + (index <= 0 ? root.first-row-height : root.row-height)
+    }
+
+    focus := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == " " || event.text == Key.DownArrow || event.text == Key.UpArrow {
+                root.show-list();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            focus.focus();
+            root.show-list();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+
+        Text {
+            text: Icons.calendar;
+            font-family: root.icon-font;
+            font-size: 14px;
+            color: #5f6470;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+
+        if root.checking && root.current-index == 0: Text {
+            text: "Checking your calendar…";
+            color: #5f6470;
+            font-size: 13px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            overflow: elide;
+        }
+        if !(root.checking && root.current-index == 0): Text {
+            text: root.current.title;
+            color: root.current-index == 0 ? #5f6470 : #20232a;
+            font-size: 13px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            min-width: 0px;
+            overflow: elide;
+            accessible-role: none;
+        }
+
+        if root.current.now: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                background: #dcfce7;
+                border-radius: 9px;
+                HorizontalLayout {
+                    padding-left: 7px;
+                    padding-right: 7px;
+                    padding-top: 1px;
+                    padding-bottom: 1px;
+                    Text {
+                        text: "Now";
+                        color: #166534;
+                        font-size: 11px;
+                        font-weight: 600;
+                        accessible-role: none;
+                    }
+                }
+            }
+        }
+
+        Text {
+            text: Icons.chevron;
+            font-family: root.icon-font;
+            font-size: 10px;
+            color: #5f6470;
+            vertical-alignment: center;
+            accessible-role: none;
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.popup-width;
+        height: Math.min(root.rows-height + root.footer-height, root.popup-max-height);
+        close-policy: close-on-click-outside;
+        forward-focus: list-focus;
+
+        Rectangle {
+            background: #ffffff;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #c9ccd3;
+            drop-shadow-blur: 16px;
+            drop-shadow-offset-y: 6px;
+            drop-shadow-color: #20232a33;
+        }
+
+        list-focus := FocusScope {
+            focus-changed-event => {
+                root.open = self.has-focus;
+            }
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    popup.close();
+                    return accept;
+                }
+                if event.text == Key.DownArrow || event.text == Key.UpArrow {
+                    root.highlight = event.text == Key.DownArrow ? Math.min(root.highlight + 1, root.rows.length) : Math.max(root.highlight - 1, 0);
+                    // Keeps the keyboard position in view.
+                    if root.highlight < root.rows.length {
+                        if root.row-top(root.highlight) < -list.content-y {
+                            list.content-y = -root.row-top(root.highlight);
+                        } else if root.row-bottom(root.highlight) + 2 * root.list-padding > list.visible-height - list.content-y {
+                            list.content-y = list.visible-height - root.row-bottom(root.highlight) - 2 * root.list-padding;
+                        }
+                    }
+                    return accept;
+                }
+                if event.text == Key.Return || event.text == " " {
+                    if root.highlight < root.rows.length {
+                        root.choose(root.highlight);
+                    } else if root.refresh-enabled {
+                        root.refresh-requested();
+                    }
+                    return accept;
+                }
+                reject
+            }
+
+            VerticalLayout {
+                list := ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        padding: root.list-padding;
+                        alignment: start;
+
+                        for row[index] in root.rows: MeetingListItem {
+                            height: index == 0 ? root.first-row-height : root.row-height;
+                            entry: row;
+                            index: index;
+                            count: root.rows.length;
+                            selected: index == root.current-index;
+                            highlighted: index == root.highlight;
+                            clicked => { root.choose(index); }
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    padding-left: root.list-padding;
+                    padding-right: root.list-padding;
+                    padding-bottom: root.list-padding;
+
+                    Rectangle {
+                        height: root.separator-height;
+                        Rectangle {
+                            y: 4px;
+                            height: 1px;
+                            border-width: 1px;
+                            border-color: #e6e8ed;
+                        }
+                    }
+
+                    Rectangle {
+                        height: root.refresh-height;
+                        border-radius: 6px;
+                        background: root.refresh-enabled && (refresh-touch.has-hover || root.highlight == root.rows.length) ? #f1f3f6 : #ffffff;
+                        accessible-role: button;
+                        accessible-label: "Refresh meetings";
+                        accessible-enabled: root.refresh-enabled;
+                        accessible-action-default => {
+                            if root.refresh-enabled {
+                                root.refresh-requested();
+                            }
+                        }
+
+                        refresh-touch := TouchArea {
+                            enabled: root.refresh-enabled;
+                            clicked => { root.refresh-requested(); }
+                        }
+
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 12px;
+
+                            Text {
+                                width: 52px;
+                                text: Icons.refresh;
+                                font-family: root.icon-font;
+                                font-size: 15px;
+                                color: root.refresh-enabled ? #1d4ed8 : #5f6470;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
+                            Text {
+                                text: root.refresh-enabled ? "Refresh meetings" : "Checking your calendar…";
+                                color: root.refresh-enabled ? #1d4ed8 : #5f6470;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                accessible-role: none;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 export component MainWindow inherits Window {
     title: "NoteIQ";
@@ -18,14 +485,16 @@ export component MainWindow inherits Window {
     }
 
     in-out property <string> note-text;
-    in-out property <string> status-text: "Ready";
-    in-out property <string> meeting-hint: "Checking your calendar…";
+    in-out property <string> status-text;
+    // Shows the status in red, for problems only.
+    in-out property <bool> status-error;
+    // Problems only: an empty hint takes no space.
+    in-out property <string> meeting-hint;
+    in-out property <bool> meeting-checking: true;
     in-out property <string> destination-label;
-    in-out property <string> open-label: "Open note";
-    // Option 0 is always "No meeting"; the others are meetings, most relevant first.
-    in-out property <[string]> meeting-options: ["No meeting"];
+    // Row 0 is always "No meeting"; the others are meetings, most relevant first.
+    in-out property <[MeetingRow]> meeting-rows: [{ label: "No meeting", title: "No meeting" }];
     in-out property <int> meeting-index: 0;
-    in-out property <bool> meeting-picker-enabled: false;
     in-out property <bool> meeting-refresh-enabled: true;
     in-out property <bool> meeting-change-confirmation-visible: false;
     in-out property <bool> saved: false;
@@ -39,6 +508,8 @@ export component MainWindow inherits Window {
     in-out property <string> note-filename-preview;
     in-out property <string> note-filename-error;
     in-out property <bool> destination-error: false;
+    // Windows 10 has the same glyphs in Segoe MDL2 Assets.
+    in-out property <string> icon-font: "Segoe Fluent Icons";
     property <int> meeting-change-focus-index: 0;
 
     changed meeting-change-confirmation-visible => {
@@ -97,358 +568,286 @@ export component MainWindow inherits Window {
             reject
         }
 
-        Rectangle {
-            background: #f5f6f8;
+        VerticalLayout {
+            padding: 16px;
+            padding-bottom: 12px;
+            spacing: 10px;
 
-            VerticalLayout {
-                padding: 22px;
-                spacing: 16px;
+            toolbar := HorizontalLayout {
+                spacing: 6px;
 
+                meeting-picker := MeetingPicker {
+                    rows: root.meeting-rows;
+                    current-index <=> root.meeting-index;
+                    // Settings never changes the meeting.
+                    enabled: !root.settings-visible;
+                    checking: root.meeting-checking;
+                    refresh-enabled: root.meeting-refresh-enabled;
+                    icon-font: root.icon-font;
+                    popup-width: toolbar.width;
+                    popup-max-height: root.height - 80px;
+                    chosen(index) => { root.meeting-chosen(index); }
+                    refresh-requested => { root.meeting-refresh-requested(); }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    padding-left: 2px;
+                    padding-right: 2px;
+                    Rectangle {
+                        width: 1px;
+                        height: 20px;
+                        border-width: 1px;
+                        border-color: #d5d8de;
+                    }
+                }
+
+                IconButton {
+                    glyph: Icons.add;
+                    label: "New note";
+                    tip: "New note (Ctrl+N)";
+                    icon-font: root.icon-font;
+                    clicked => { root.new-note-requested(); }
+                }
+                if root.has-note: IconButton {
+                    glyph: Icons.open;
+                    label: "Open note";
+                    tip: "Open note";
+                    icon-font: root.icon-font;
+                    clicked => { root.open-requested(); }
+                }
+                IconButton {
+                    glyph: Icons.settings;
+                    label: "Settings";
+                    tip: "Settings";
+                    icon-font: root.icon-font;
+                    checked: root.settings-visible;
+                    clicked => {
+                        if root.settings-visible {
+                            root.close-settings();
+                        } else {
+                            root.settings-visible = true;
+                            root.settings-requested(true);
+                        }
+                    }
+                }
+            }
+
+            if root.meeting-hint != "": Rectangle {
+                background: #fef3c7;
+                border-radius: 6px;
                 HorizontalLayout {
-                    height: 42px;
-                    spacing: 10px;
-
-                    Image {
-                        width: 36px;
-                        height: 36px;
-                        source: root.app-icon;
-                        image-fit: contain;
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 6px;
+                    padding-bottom: 6px;
+                    Text {
+                        text: root.meeting-hint;
+                        color: #92400e;
+                        font-size: 12px;
+                        wrap: word-wrap;
                     }
+                }
+            }
 
+            Rectangle {
+                min-width: 0px;
+                min-height: 0px;
+                vertical-stretch: 1;
+
+                Rectangle {
+                    visible: !root.settings-visible;
                     VerticalLayout {
-                        alignment: center;
-                        spacing: 1px;
-                        Text {
-                            text: "NoteIQ";
-                            color: #20232a;
+                        spacing: 8px;
+
+                        note-editor := TextEdit {
+                            min-height: 100px;
+                            vertical-stretch: 1;
+                            text <=> root.note-text;
+                            placeholder-text: "Start typing… notes save automatically.";
+                            accessible-label: "Note contents";
                             font-family: "Segoe UI Variable";
-                            font-size: 19px;
-                            font-weight: 650;
+                            font-size: 15px;
+                            edited => { root.body-changed(self.text); }
                         }
-                        Text {
-                            text: "Quick capture";
-                            color: #5f6470;
-                            font-size: 12px;
-                        }
-                    }
 
-                    Rectangle { horizontal-stretch: 1; }
+                        HorizontalLayout {
+                            min-height: 18px;
+                            spacing: 8px;
 
-                    Button {
-                        text: "New note";
-                        clicked => { root.new-note-requested(); }
-                    }
-                    Button {
-                        text: "Settings";
-                        clicked => {
-                            if root.settings-visible {
-                                root.close-settings();
-                            } else {
-                                root.settings-visible = true;
-                                root.settings-requested(true);
+                            // Wraps rather than truncating: it may be the only explanation of
+                            // a failed save.
+                            Text {
+                                text: root.status-text;
+                                color: root.status-error ? #b91c1c : #5f6470;
+                                font-size: 12px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                min-width: 0px;
+                                wrap: word-wrap;
+                            }
+                            if root.destination-error: LinkButton {
+                                text: "Choose folder";
+                                clicked => { root.destination-requested(); }
                             }
                         }
                     }
                 }
 
-                Rectangle {
-                    min-width: 0px;
-                    min-height: 0px;
-                    vertical-stretch: 1;
+                if root.settings-visible: Rectangle {
+                    background: #ffffff;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: #e6e8ed;
 
-                    Rectangle {
-                        visible: !root.settings-visible;
-                        VerticalLayout {
-                            spacing: 16px;
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 12px;
 
-                            Rectangle {
-                                background: #ffffff;
-                                border-radius: 14px;
-                                border-width: 1px;
-                                border-color: #e6e8ed;
-                                vertical-stretch: 0;
+                        ScrollView {
+                            content-width: self.width;
 
+                            VerticalLayout {
+                                spacing: 12px;
+                                alignment: start;
+
+                                Rectangle {
+                                    background: #f7f7f9;
+                                    border-radius: 8px;
+                                    border-width: 1px;
+                                    border-color: #ebecef;
+                                    HorizontalLayout {
+                                        padding: 8px;
+                                        padding-left: 10px;
+                                        spacing: 8px;
+                                        Text {
+                                            text: Icons.folder;
+                                            font-family: root.icon-font;
+                                            font-size: 15px;
+                                            color: #383b43;
+                                            vertical-alignment: center;
+                                            accessible-role: none;
+                                        }
+                                        Text {
+                                            text: root.destination-label;
+                                            color: #383b43;
+                                            font-size: 13px;
+                                            vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            overflow: elide;
+                                        }
+                                        Button {
+                                            text: "Change";
+                                            accessible-label: "Choose folder";
+                                            clicked => { root.destination-requested(); }
+                                        }
+                                    }
+                                }
+                                CheckBox {
+                                    text: "Connect to my current meeting automatically";
+                                    checked: root.auto-connect;
+                                    toggled => { root.auto-connect-changed(self.checked); }
+                                }
+                                CheckBox {
+                                    text: "Enable the global capture shortcut";
+                                    checked: root.hotkey-enabled;
+                                    toggled => {
+                                        root.hotkey-enabled = self.checked;
+                                        root.hotkey-enabled-changed(self.checked);
+                                    }
+                                }
                                 VerticalLayout {
-                                    padding-top: 12px;
-                                    padding-bottom: 12px;
-                                    padding-left: 16px;
-                                    padding-right: 16px;
-                                    spacing: 6px;
+                                    spacing: 4px;
 
                                     HorizontalLayout {
                                         spacing: 10px;
                                         Text {
-                                            text: "Meeting";
-                                            // The picker carries this name for screen readers.
-                                            accessible-role: none;
+                                            text: "Shortcut";
                                             color: #383b43;
                                             font-size: 13px;
-                                            font-weight: 600;
+                                            min-width: 96px;
                                             vertical-alignment: center;
                                         }
-                                        meeting-picker := ComboBox {
-                                            accessible-label: "Meeting";
-                                            model: root.meeting-options;
-                                            current-index <=> root.meeting-index;
-                                            enabled: root.meeting-picker-enabled;
+                                        LineEdit {
+                                            text <=> root.hotkey-text;
+                                            placeholder-text: "Win+Shift+N";
+                                            accessible-label: "Capture shortcut";
                                             horizontal-stretch: 1;
-                                            selected(value) => { root.meeting-chosen(self.current-index); }
-                                        }
-                                        Button {
-                                            text: "Refresh";
-                                            accessible-label: "Refresh meetings";
-                                            enabled: root.meeting-refresh-enabled;
-                                            clicked => { root.meeting-refresh-requested(); }
+                                            edited(text) => { root.hotkey-error = ""; }
+                                            accepted(text) => { root.hotkey-changed(text); }
                                         }
                                     }
-
-                                    if root.meeting-hint != "" : Text {
-                                        text: root.meeting-hint;
-                                        color: #5f6470;
+                                    if root.hotkey-error != "": Text {
+                                        text: root.hotkey-error;
+                                        color: #b91c1c;
                                         font-size: 12px;
                                         wrap: word-wrap;
                                     }
                                 }
-                            }
+                                VerticalLayout {
+                                    spacing: 4px;
 
-                            Rectangle {
-                                background: #ffffff;
-                                border-radius: 14px;
-                                border-width: 1px;
-                                border-color: #e6e8ed;
-                                min-height: 100px;
-                                vertical-stretch: 1;
-
-                                note-editor := TextEdit {
-                                    x: 16px;
-                                    y: 14px;
-                                    width: parent.width - 32px;
-                                    height: parent.height - 28px;
-                                    text <=> root.note-text;
-                                    accessible-label: "Note contents";
-                                    font-family: "Segoe UI Variable";
-                                    font-size: 15px;
-                                    edited => { root.body-changed(self.text); }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                min-height: 38px;
-                                spacing: 8px;
-
-                                Text {
-                                    text: root.has-note ? (root.saved ? "Saved" : "Unsaved") : "Draft";
-                                    color: root.saved ? #166534 : #b45309;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
-                                }
-                                // Wraps rather than truncating: it may be the only explanation
-                                // of a failed save.
-                                Text {
-                                    text: root.status-text;
-                                    color: #5f6470;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
-                                    horizontal-stretch: 1;
-                                    min-width: 0px;
-                                    wrap: word-wrap;
-                                }
-                                if root.has-note: Button {
-                                    text: root.open-label;
-                                    clicked => { root.open-requested(); }
-                                }
-                                if root.destination-error: Button {
-                                    text: "Choose folder";
-                                    clicked => { root.destination-requested(); }
-                                }
-                                Button {
-                                    text: "Save";
-                                    clicked => { root.save-requested(); }
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        Text {
+                                            text: "Filename";
+                                            color: #383b43;
+                                            font-size: 13px;
+                                            min-width: 96px;
+                                            vertical-alignment: center;
+                                        }
+                                        LineEdit {
+                                            text <=> root.note-filename-text;
+                                            placeholder-text: "{date}_{time}_{title}";
+                                            accessible-label: "Note filename template";
+                                            horizontal-stretch: 1;
+                                            edited(text) => { root.note-filename-edited(text); }
+                                            accepted(text) => { root.note-filename-changed(text); }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        padding-left: 106px;
+                                        VerticalLayout {
+                                            spacing: 2px;
+                                            Text {
+                                                text: root.note-filename-error != "" ? root.note-filename-error : root.note-filename-preview;
+                                                color: root.note-filename-error != "" ? #b91c1c : #5f6470;
+                                                font-size: 12px;
+                                                wrap: word-wrap;
+                                            }
+                                            Text {
+                                                text: "Use {date}, {time}, and {title}. Applies to new notes.";
+                                                color: #5f6470;
+                                                font-size: 12px;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    if root.settings-visible: Rectangle {
-                        background: #ffffff;
-                        border-radius: 14px;
-                        border-width: 1px;
-                        border-color: #e6e8ed;
-
-                        VerticalLayout {
-                            padding: 18px;
-                            spacing: 14px;
-
-                            ScrollView {
-                                content-width: self.width;
-
-                                VerticalLayout {
-                                    spacing: 14px;
-                                    alignment: start;
-
-                                    Text {
-                                        text: "Capture settings";
-                                        color: #20232a;
-                                        font-size: 17px;
-                                        font-weight: 650;
-                                    }
-                                    Text {
-                                        text: "Notes are saved to one folder only.";
-                                        color: #5f6470;
-                                        font-size: 13px;
-                                    }
-                                    Rectangle {
-                                        background: #f7f7f9;
-                                        border-radius: 9px;
-                                        border-width: 1px;
-                                        border-color: #ebecef;
-                                        HorizontalLayout {
-                                            padding: 10px;
-                                            spacing: 8px;
-                                            Text {
-                                                text: root.destination-label;
-                                                color: #383b43;
-                                                font-size: 13px;
-                                                vertical-alignment: center;
-                                                horizontal-stretch: 1;
-                                                min-width: 0px;
-                                                overflow: elide;
-                                            }
-                                            Button {
-                                                text: "Choose folder";
-                                                clicked => { root.destination-requested(); }
-                                            }
-                                        }
-                                    }
-                                    CheckBox {
-                                        text: "Connect to my current meeting automatically";
-                                        checked: root.auto-connect;
-                                        toggled => { root.auto-connect-changed(self.checked); }
-                                    }
-                                    CheckBox {
-                                        text: "Enable the global capture shortcut";
-                                        checked: root.hotkey-enabled;
-                                        toggled => {
-                                            root.hotkey-enabled = self.checked;
-                                            root.hotkey-enabled-changed(self.checked);
-                                        }
-                                    }
-                                    VerticalLayout {
-                                        spacing: 6px;
-
-                                        HorizontalLayout {
-                                            spacing: 10px;
-                                            Text {
-                                                text: "Capture shortcut";
-                                                color: #383b43;
-                                                font-size: 13px;
-                                                min-width: 112px;
-                                                vertical-alignment: center;
-                                            }
-                                            LineEdit {
-                                                text <=> root.hotkey-text;
-                                                placeholder-text: "Win+Shift+N";
-                                                accessible-label: "Capture shortcut";
-                                                horizontal-stretch: 1;
-                                                edited(text) => { root.hotkey-error = ""; }
-                                                accepted(text) => { root.hotkey-changed(text); }
-                                            }
-                                        }
-                                        if root.hotkey-error != "": Text {
-                                            text: root.hotkey-error;
-                                            color: #b91c1c;
-                                            font-size: 12px;
-                                            wrap: word-wrap;
-                                        }
-                                        Text {
-                                            text: "Press Enter or Done to apply the shortcut.";
-                                            color: #5f6470;
-                                            font-size: 12px;
-                                            wrap: word-wrap;
-                                        }
-                                    }
-                                    VerticalLayout {
-                                        spacing: 6px;
-
-                                        HorizontalLayout {
-                                            spacing: 10px;
-                                            Text {
-                                                text: "Note filename";
-                                                color: #383b43;
-                                                font-size: 13px;
-                                                min-width: 112px;
-                                                vertical-alignment: center;
-                                            }
-                                            LineEdit {
-                                                text <=> root.note-filename-text;
-                                                placeholder-text: "{date}_{time}_{title}";
-                                                accessible-label: "Note filename template";
-                                                horizontal-stretch: 1;
-                                                edited(text) => { root.note-filename-edited(text); }
-                                                accepted(text) => { root.note-filename-changed(text); }
-                                            }
-                                        }
-                                        Text {
-                                            text: root.note-filename-error != "" ? root.note-filename-error : root.note-filename-preview;
-                                            color: root.note-filename-error != "" ? #b91c1c : #5f6470;
-                                            font-size: 12px;
-                                            wrap: word-wrap;
-                                        }
-                                        Text {
-                                            text: "Use {date}, {time}, and {title}. The .md extension is added automatically.";
-                                            color: #5f6470;
-                                            font-size: 12px;
-                                            wrap: word-wrap;
-                                        }
-                                        Text {
-                                            text: "Title uses the meeting name, or the first non-empty line of your note.";
-                                            color: #5f6470;
-                                            font-size: 12px;
-                                            wrap: word-wrap;
-                                        }
-                                        Text {
-                                            text: "Applies to new notes. Notes stay in captures\\YYYY\\MM.";
-                                            color: #5f6470;
-                                            font-size: 12px;
-                                            wrap: word-wrap;
-                                        }
-                                        HorizontalLayout {
-                                            spacing: 8px;
-                                            alignment: start;
-                                            Button {
-                                                text: "Use default style";
-                                                clicked => {
-                                                    root.note-filename-text = "{date}_{time}_{title}";
-                                                    root.note-filename-changed(root.note-filename-text);
-                                                }
-                                            }
-                                            Button {
-                                                text: "Use date–title style";
-                                                clicked => {
-                                                    root.note-filename-text = "{date}-{title}";
-                                                    root.note-filename-changed(root.note-filename-text);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Text {
-                                        text: "WorkIQ is provided by Scout. NoteIQ never installs or copies it.";
-                                        color: #5f6470;
-                                        font-size: 12px;
-                                        wrap: word-wrap;
-                                    }
-                                }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: "WorkIQ is provided by Scout; NoteIQ never installs it.";
+                                color: #5f6470;
+                                font-size: 11px;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                min-width: 0px;
+                                wrap: word-wrap;
                             }
-
                             Button {
                                 text: "Done";
+                                primary: true;
                                 clicked => { root.close-settings(); }
                             }
                         }
                     }
                 }
             }
-
         }
     }
 

@@ -7,7 +7,7 @@ mod generated {
     slint::include_modules!();
 }
 
-use generated::{MainWindow, Palette};
+use generated::{MainWindow, MeetingRow, Palette};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle};
 use slint::{
     ComponentHandle, LogicalSize, ModelRc, SharedString, VecModel,
@@ -102,19 +102,43 @@ const PLANNING: &str = "Sprint planning · 04 Nov · 08:00–08:45";
 const STANDUP: &str = "Standup · 04 Nov · 09:00–09:15";
 const REVIEW: &str = "Design review · 04 Nov · 09:30–10:00";
 
-/// Mirrors the controller: option 0 is always "No meeting", followed by the meetings.
-fn show_meetings(window: &MainWindow, meetings: &[&str], index: i32) {
-    let options: Vec<SharedString> = std::iter::once(NO_MEETING)
-        .chain(meetings.iter().copied())
-        .map(SharedString::from)
-        .collect();
-    window.set_meeting_options(ModelRc::new(VecModel::from(options)));
-    window.set_meeting_index(index);
-    window.set_meeting_picker_enabled(!meetings.is_empty());
+/// A list row for a label such as `Standup · 04 Nov · 09:00–09:15`.
+fn row(label: &str) -> MeetingRow {
+    let mut parts = label.split(" · ");
+    let title = parts.next().unwrap_or_default();
+    let time = parts.nth(1).and_then(|span| span.split('–').next());
+    MeetingRow {
+        label: label.into(),
+        title: title.into(),
+        time: time.unwrap_or_default().into(),
+        details: format!("{title} details").into(),
+        ..MeetingRow::default()
+    }
 }
 
-/// Runs the change handlers Slint defers to the next frame, such as the ComboBox's
-/// reaction to a replaced model.
+/// Mirrors the controller: row 0 is always "No meeting", followed by the meetings.
+fn show_rows(window: &MainWindow, rows: Vec<MeetingRow>, index: i32) {
+    let rows: Vec<MeetingRow> = std::iter::once(MeetingRow {
+        label: NO_MEETING.into(),
+        title: NO_MEETING.into(),
+        ..MeetingRow::default()
+    })
+    .chain(rows)
+    .collect();
+    window.set_meeting_rows(ModelRc::new(VecModel::from(rows)));
+    window.set_meeting_index(index);
+    window.set_meeting_checking(false);
+}
+
+fn show_meetings(window: &MainWindow, meetings: &[&str], index: i32) {
+    show_rows(
+        window,
+        meetings.iter().map(|label| row(label)).collect(),
+        index,
+    );
+}
+
+/// Runs the change handlers Slint defers to the next frame.
 fn settle() {
     i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(16));
 }
@@ -216,7 +240,29 @@ fn hidden_settings_leave_room_for_the_note_and_footer() {
         editor.size()
     );
     assert_inside_window(&window, &editor);
-    assert_inside_window(&window, &element(&window, "Save", AccessibleRole::Button));
+    for label in ["New note", "Settings"] {
+        assert_inside_window(&window, &element(&window, label, AccessibleRole::Button));
+    }
+}
+
+#[test]
+fn the_capture_window_has_no_header_or_save_button() {
+    let window = open_window();
+    window.set_has_note(true);
+    for label in ["Save", "Refresh", "Refresh meetings"] {
+        assert!(
+            !offers_button(&window, label),
+            "unexpected {label:?} button"
+        );
+    }
+    for text in ["NoteIQ", "Quick capture", "Draft", "Unsaved"] {
+        assert!(!shows_text(&window, text), "unexpected {text:?} text");
+    }
+    let editor = element(&window, "Note contents", AccessibleRole::TextInput);
+    assert_eq!(
+        editor.accessible_placeholder_text().as_deref(),
+        Some("Start typing… notes save automatically.")
+    );
 }
 
 #[test]
@@ -239,7 +285,7 @@ fn meeting_picker_and_note_fit_the_minimum_window_size() {
         editor.size()
     );
     assert_inside_window(&window, &editor);
-    for label in ["Refresh meetings", "Save"] {
+    for label in ["New note", "Settings"] {
         assert_inside_window(&window, &element(&window, label, AccessibleRole::Button));
     }
 }
@@ -275,9 +321,12 @@ fn settings_fit_without_discarding_the_note_or_selected_meeting() {
     show_meetings(&window, &[REVIEW], 1);
 
     click_button(&window, "Settings");
-    assert!(find(&window, "Meeting", AccessibleRole::Combobox).is_none());
-    assert!(!offers_button(&window, "Refresh meetings"));
-    assert!(!offers_button(&window, "Save"));
+    assert_eq!(picker(&window).accessible_enabled(), Some(false));
+    picker(&window).mock_single_click(PointerEventButton::Left);
+    assert!(
+        find(&window, REVIEW, AccessibleRole::ListItem).is_none(),
+        "the meeting list stays closed while Settings is open"
+    );
     let done = element(&window, "Done", AccessibleRole::Button);
     assert_inside_window(&window, &done);
     assert_inside_window(
@@ -497,16 +546,19 @@ fn starting_a_new_note_clears_text_typed_into_the_editor() {
 }
 
 #[test]
-fn save_state_moves_from_draft_to_unsaved_to_saved() {
+fn the_footer_shows_a_single_status_line() {
     let window = open_window();
-    assert!(shows_text(&window, "Draft"));
-
+    let status = "Saved · 14:41";
     window.set_has_note(true);
-    window.set_saved(false);
-    assert!(shows_text(&window, "Unsaved"));
-
     window.set_saved(true);
-    assert!(shows_text(&window, "Saved"));
+    window.set_status_text(status.into());
+    assert!(shows_text(&window, status));
+
+    let problem = "Could not save the note: disk full";
+    window.set_status_text(problem.into());
+    window.set_status_error(true);
+    assert!(shows_text(&window, problem));
+    assert!(!shows_text(&window, status));
 }
 
 #[test]
@@ -534,10 +586,12 @@ fn picker_starts_on_no_meeting_without_separate_meeting_buttons() {
     assert_eq!(picker.accessible_value().as_deref(), Some(NO_MEETING));
     assert_eq!(
         picker.accessible_enabled(),
-        Some(false),
-        "a picker holding only No meeting has nothing to choose"
+        Some(true),
+        "the list always offers Refresh meetings"
     );
     assert!(shows_text(&window, "Checking your calendar…"));
+    window.set_meeting_checking(false);
+    assert!(!shows_text(&window, "Checking your calendar…"));
     for label in ["No meeting", "Connect", "Disconnect", "Find meeting"] {
         assert!(
             !offers_button(&window, label),
@@ -562,6 +616,50 @@ fn choosing_from_the_picker_reports_the_option_index() {
         picker(&window).accessible_value().as_deref(),
         Some(NO_MEETING)
     );
+}
+
+#[test]
+fn meeting_rows_show_time_title_and_details_and_mark_the_current_meeting() {
+    let window = open_window();
+    window.window().set_size(LogicalSize::new(640.0, 540.0));
+    let mut current = row(REVIEW);
+    current.details = "ends 10:00 · Alex Morgan · 12 people".into();
+    current.now = true;
+    let mut ended = row(STANDUP);
+    ended.past = true;
+    show_rows(&window, vec![current, ended], 1);
+
+    picker(&window).mock_single_click(PointerEventButton::Left);
+    assert_eq!(picker(&window).accessible_expanded(), Some(true));
+    let item = element(&window, REVIEW, AccessibleRole::ListItem);
+    assert_eq!(
+        item.accessible_description().as_deref(),
+        Some("ends 10:00 · Alex Morgan · 12 people")
+    );
+    assert_eq!(item.accessible_item_selected(), Some(true));
+    assert_eq!(item.accessible_item_index(), Some(1));
+    assert_eq!(item.accessible_item_count(), Some(3));
+    assert_inside_window(&window, &item);
+    assert_inside_window(
+        &window,
+        &element(&window, "Refresh meetings", AccessibleRole::Button),
+    );
+}
+
+#[test]
+fn the_keyboard_opens_the_list_and_chooses_a_row() {
+    let window = open_window();
+    let choices = record_meeting_choices(&window);
+    show_meetings(&window, &[STANDUP, REVIEW], 1);
+
+    picker(&window).mock_single_click(PointerEventButton::Left);
+    key(&window, Key::DownArrow.into());
+    key(&window, Key::Return.into());
+    settle();
+
+    assert_eq!(*choices.borrow(), vec![2]);
+    assert_eq!(window.get_meeting_index(), 2);
+    assert!(find(&window, REVIEW, AccessibleRole::ListItem).is_none());
 }
 
 #[test]
@@ -622,6 +720,11 @@ fn refresh_explains_lookup_problems_and_waits_for_a_running_lookup() {
 
     window.set_meeting_hint(message.into());
     assert!(shows_text(&window, message));
+    assert!(
+        !offers_button(&window, "Refresh meetings"),
+        "Refresh lives in the meeting list"
+    );
+    picker(&window).mock_single_click(PointerEventButton::Left);
     click_button(&window, "Refresh meetings");
     assert_eq!(refreshes.get(), 1);
 
@@ -778,28 +881,6 @@ fn done_applies_a_pending_note_filename() {
 
     assert_eq!(*changes.borrow(), vec!["{date}_{title}".to_owned()]);
     assert!(!window.get_settings_visible());
-}
-
-#[test]
-fn filename_style_buttons_fill_in_and_apply_a_template() {
-    let window = open_window();
-    window.window().set_size(LogicalSize::new(760.0, 860.0));
-    let (changes, record_change) = recorder();
-    window.on_note_filename_changed(record_change);
-
-    click_button(&window, "Settings");
-    click_button(&window, "Use date–title style");
-    assert_eq!(window.get_note_filename_text(), "{date}-{title}");
-    click_button(&window, "Use default style");
-    assert_eq!(window.get_note_filename_text(), "{date}_{time}_{title}");
-
-    assert_eq!(
-        *changes.borrow(),
-        vec![
-            "{date}-{title}".to_owned(),
-            "{date}_{time}_{title}".to_owned()
-        ]
-    );
 }
 
 #[test]
