@@ -394,8 +394,9 @@ Each ZIP also has a CycloneDX 1.5 SBOM, such as
 `noteiq-v0.2.0-windows-x64.cdx.json`, listing the Rust crates compiled into that
 `noteiq.exe` with their versions, licenses, and package URLs.
 `scripts/release_sbom.py` generates it with `cargo-cyclonedx` and keeps only the
-crates that `cargo tree -e normal` reports for the release target, so crates
-used only by tests or builds are left out. The release workflow attests each
+crates that `cargo tree -e normal,no-proc-macro` reports for the release target,
+so crates used only by tests, build scripts, or proc-macros are left out. The
+release workflow attests each
 SBOM against its ZIP:
 
 ```powershell
