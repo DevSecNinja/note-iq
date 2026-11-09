@@ -329,7 +329,10 @@ tags or by manual tag retry, builds both architectures from that exact tagged
 commit through the local reusable `build-windows.yml`, verifies each
 executable's architecture, and packages each ZIP with `noteiq.exe`,
 `README.md`, and `LICENSE`. It also publishes a CycloneDX SBOM per architecture,
-`SHA256SUMS.txt`, and GitHub attestations. Publishing may only
+a `.sha256` checksum file per asset, and GitHub attestations, and adds a
+Download section to the release notes with direct links to both ZIPs. The
+section starts with a `<!-- noteiq-downloads -->` marker, so a retry replaces it
+instead of adding a second copy. Publishing may only
 complete an existing draft created by Release Please; it must not create a
 separate release. The central release-publish workflow is not suitable because
 it creates a release with `gh release create` instead of uploading assets to
@@ -374,12 +377,12 @@ external ZIP utility. PR #5 has also passed hosted Linux x64/ARM64 checks,
 Windows x64/ARM64 tests and both release artifact builds. Release publication
 has not been exercised; the app credentials and repository setup below remain required.
 
-After downloading a release archive, compare its hash with the matching entry
-in `SHA256SUMS.txt`:
+After downloading a release archive, compare its hash with the matching
+`.sha256` file:
 
 ```powershell
 Get-FileHash .\noteiq-v0.2.0-windows-x64.zip -Algorithm SHA256
-Get-Content .\SHA256SUMS.txt
+Get-Content .\noteiq-v0.2.0-windows-x64.zip.sha256
 ```
 
 GitHub CLI can verify the artifact's provenance attestation (replace the

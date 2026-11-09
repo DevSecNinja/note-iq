@@ -216,8 +216,8 @@
   `skip-github-release: false`, `draft: true`, and
   `force-tag-creation: true`. Local `release.yml` responds to `v*` tags and
   manual tag retries, builds both architectures from the exact tagged commit,
-  packages the executable, README, and LICENSE in each ZIP, creates
-  `SHA256SUMS.txt` and GitHub attestations, and publishes only the draft already
+  packages the executable, README, and LICENSE in each ZIP, creates a `.sha256`
+  file per asset and GitHub attestations, and publishes only the draft already
   created by Release Please. Local `.github/workflows/release.yml` uses
   `.github/workflows/build-windows.yml` for the architecture-verified release
   builds.
