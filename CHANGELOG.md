@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/DevSecNinja/note-iq/compare/v0.2.0...v0.2.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **release:** exclude proc-macro dependencies from release SBOMs ([dbf9d90](https://github.com/DevSecNinja/note-iq/commit/dbf9d90a275639a2a387e8b63c93819dea981f1f))
+* **release:** exclude proc-macro dependencies from release SBOMs ([f74a06d](https://github.com/DevSecNinja/note-iq/commit/f74a06d9281a30ccc1b0b1e041d7443911ead139))
+
 ## [0.2.0](https://github.com/DevSecNinja/note-iq/compare/v0.1.0...v0.2.0) (2026-11-09)
 
 

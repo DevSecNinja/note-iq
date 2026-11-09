@@ -3307,7 +3307,7 @@ dependencies = [
 
 [[package]]
 name = "noteiq-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -3327,7 +3327,7 @@ dependencies = [
 
 [[package]]
 name = "noteiq-windows"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "directories",
