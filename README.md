@@ -1,4 +1,10 @@
-# NoteIQ
+<p align="center">
+  <img src="apps/noteiq-windows/assets/noteiq.svg" alt="NoteIQ logo" width="96" height="96">
+</p>
+
+<h1 align="center">NoteIQ</h1>
+
+<p align="center"><strong>Quick-capture Markdown notes for Windows, with meeting context built in.</strong></p>
 
 NoteIQ is a Windows x64 and ARM64 quick-capture app for Markdown notes. It opens a
 small editor, timestamps each capture, optionally adds current-meeting context
