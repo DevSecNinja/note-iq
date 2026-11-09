@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Writes a CycloneDX SBOM for each Windows release architecture.
 
-cargo-cyclonedx also lists crates that only the tests use, and the features they enable,
-such as extra renderers. Each SBOM keeps only the crates that `cargo tree -e normal`
-reports for the release build of that target, so it describes what `noteiq.exe` contains.
+cargo-cyclonedx also lists crates that only the tests use, the features they enable, such
+as extra renderers, and proc-macros. Each SBOM keeps only the crates that
+`cargo tree -e normal,no-proc-macro` reports for the release target, so it describes what
+`noteiq.exe` contains, whichever platform generates it.
 
 Requires `cargo-cyclonedx` on PATH. Set SOURCE_DATE_EPOCH for reproducible timestamps.
 """
@@ -26,10 +27,16 @@ def run(*args: str) -> str:
 
 
 def release_crates(target: str) -> set[tuple[str, str]]:
-    """Every crate `cargo build` compiles into the release executable for `target`."""
+    """Every crate `cargo build` links into the release executable for `target`.
+
+    Proc-macros run on the build machine and are not part of the executable; cargo also
+    resolves their dependencies for that machine rather than for `target`, so they are
+    left out.
+    """
     lines = run(
         "cargo", "tree", "--locked", "--package", PACKAGE, "--features", FEATURES,
-        "--target", target, "--edges", "normal", "--prefix", "none", "--format", "{p}",
+        "--target", target, "--edges", "normal,no-proc-macro", "--prefix", "none",
+        "--format", "{p}",
     ).splitlines()
     crates = set()
     for line in lines:
