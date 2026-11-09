@@ -79,7 +79,7 @@ jobs:
       - prepare
       - validate-and-build
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: write
       id-token: write
@@ -102,6 +102,17 @@ jobs:
           pattern: noteiq-windows-*
           path: artifacts
           digest-mismatch: error
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Generate SBOMs
+        env:
+          # renovate: datasource=crate depName=cargo-cyclonedx
+          cyclonedx_version: "0.5.10"
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install --locked cargo-cyclonedx --version "$cyclonedx_version"
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" python3 scripts/release_sbom.py --tag "$RELEASE_TAG" --output sbom
       - name: Package releases and checksums
         shell: bash
         run: |
@@ -120,12 +131,26 @@ jobs:
                       bundle.write(name, name)
               digest = hashlib.sha256(archive.read_bytes()).hexdigest()
               checksums.append(f"{digest}  {archive.name}\n")
+              sbom = Path("sbom") / f"noteiq-{os.environ['RELEASE_TAG']}-windows-{arch}.cdx.json"
+              (output / sbom.name).write_bytes(sbom.read_bytes())
+              digest = hashlib.sha256(sbom.read_bytes()).hexdigest()
+              checksums.append(f"{digest}  {sbom.name}\n")
           (output / "SHA256SUMS.txt").write_text("".join(checksums), encoding="utf-8")
           PY
       - name: Attest distribution files
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*
+      - name: Attest the x64 SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/noteiq-${{ needs.prepare.outputs.tag }}-windows-x64.zip
+          sbom-path: dist/noteiq-${{ needs.prepare.outputs.tag }}-windows-x64.cdx.json
+      - name: Attest the arm64 SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/noteiq-${{ needs.prepare.outputs.tag }}-windows-arm64.zip
+          sbom-path: dist/noteiq-${{ needs.prepare.outputs.tag }}-windows-arm64.cdx.json
       - name: Upload and publish the draft
         shell: bash
         run: |-
@@ -142,7 +167,9 @@ jobs:
           Choose `windows-x64` for Intel/AMD or `windows-arm64` for Windows on ARM.
           Verify the ZIP against `SHA256SUMS.txt` and its GitHub attestation:
           `gh attestation verify <downloaded-zip> --repo DevSecNinja/note-iq`.
+          Each ZIP has a CycloneDX SBOM (`*.cdx.json`) listing the Rust crates in `noteiq.exe`,
+          with a signed SBOM attestation: add `--predicate-type https://cyclonedx.org/bom` to verify it.
           These portable executables are not code-signed; Windows may show SmartScreen warnings.
           NOTES
-          gh release upload "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS.txt --clobber
+          gh release upload "$RELEASE_TAG" dist/*.zip dist/*.cdx.json dist/SHA256SUMS.txt --clobber
           gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false
