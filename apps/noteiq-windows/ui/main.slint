@@ -114,23 +114,42 @@ component LinkButton inherits Rectangle {
     }
 }
 
-component MeetingListItem inherits Rectangle {
+// Takes keyboard focus while highlighted, so screen readers follow the arrow keys. Keys it
+// does not handle go to the list, which moves the highlight and chooses rows.
+component MeetingListItem inherits FocusScope {
     in property <MeetingRow> entry;
+    // The meeting attached to the note.
     in property <bool> selected;
+    // The row Enter would choose.
     in property <bool> highlighted;
     in property <int> index;
     in property <int> count;
     callback clicked();
+    callback focus-changed(bool);
 
-    border-radius: 6px;
-    background: root.selected ? #e8eefc : (root.highlighted || touch.has-hover) ? #f1f3f6 : #ffffff;
+    focus-on-click: false;
+    focus-on-tab-navigation: false;
     accessible-role: list-item;
     accessible-label: root.entry.label;
     accessible-description: root.entry.details;
-    accessible-item-selected: root.selected;
+    accessible-item-selected: root.highlighted;
     accessible-item-index: root.index;
     accessible-item-count: root.count;
     accessible-action-default => { root.clicked(); }
+
+    changed highlighted => {
+        if root.highlighted {
+            root.focus();
+        }
+    }
+    focus-changed-event => { root.focus-changed(root.has-focus); }
+
+    Rectangle {
+        border-radius: 6px;
+        background: root.selected ? #e8eefc : (root.highlighted || touch.has-hover) ? #f1f3f6 : #ffffff;
+        border-width: root.highlighted && root.has-focus ? 1px : 0px;
+        border-color: #1d4ed8;
+    }
 
     touch := TouchArea {
         clicked => { root.clicked(); }
@@ -200,10 +219,14 @@ component MeetingPicker inherits Rectangle {
     callback chosen(int);
     callback refresh-requested();
 
+    // Changes only when the meetings or their order change, not when their details do.
+    in property <int> list-version;
+
     property <MeetingRow> current: root.rows[root.current-index];
     property <bool> open;
-    // The keyboard position in the open list; rows.length is Refresh meetings.
-    property <int> highlight;
+    // The keyboard position in the open list; rows.length is Refresh meetings, and -1 means
+    // nothing is highlighted because the meetings changed under it.
+    property <int> highlight: -1;
     property <length> list-padding: 4px;
     property <length> first-row-height: 36px;
     property <length> row-height: 52px;
@@ -233,8 +256,10 @@ component MeetingPicker inherits Rectangle {
 
     function show-list() {
         if root.enabled {
-            root.highlight = root.current-index;
+            // Setting the highlight after showing the list moves focus to that row.
+            root.highlight = -1;
             popup.show();
+            root.highlight = root.current-index;
         }
     }
 
@@ -355,6 +380,25 @@ component MeetingPicker inherits Rectangle {
         }
 
         list-focus := FocusScope {
+            // A reordered list must not let Enter choose whichever meeting moved under the
+            // highlight.
+            property <int> version: root.list-version;
+            property <int> watched-highlight: root.highlight;
+
+            changed version => {
+                root.highlight = -1;
+                self.focus();
+            }
+            // Keeps the highlighted meeting in view, including when the list opens.
+            changed watched-highlight => {
+                if root.highlight >= 0 && root.highlight < root.rows.length {
+                    if root.row-top(root.highlight) < -list.content-y {
+                        list.content-y = -root.row-top(root.highlight);
+                    } else if root.row-bottom(root.highlight) + 2 * root.list-padding > list.visible-height - list.content-y {
+                        list.content-y = list.visible-height - root.row-bottom(root.highlight) - 2 * root.list-padding;
+                    }
+                }
+            }
             focus-changed-event => {
                 root.open = self.has-focus;
             }
@@ -364,21 +408,17 @@ component MeetingPicker inherits Rectangle {
                     return accept;
                 }
                 if event.text == Key.DownArrow || event.text == Key.UpArrow {
-                    root.highlight = event.text == Key.DownArrow ? Math.min(root.highlight + 1, root.rows.length) : Math.max(root.highlight - 1, 0);
-                    // Keeps the keyboard position in view.
-                    if root.highlight < root.rows.length {
-                        if root.row-top(root.highlight) < -list.content-y {
-                            list.content-y = -root.row-top(root.highlight);
-                        } else if root.row-bottom(root.highlight) + 2 * root.list-padding > list.visible-height - list.content-y {
-                            list.content-y = list.visible-height - root.row-bottom(root.highlight) - 2 * root.list-padding;
-                        }
+                    if root.highlight < 0 {
+                        root.highlight = root.current-index;
+                    } else {
+                        root.highlight = event.text == Key.DownArrow ? Math.min(root.highlight + 1, root.rows.length) : Math.max(root.highlight - 1, 0);
                     }
                     return accept;
                 }
                 if event.text == Key.Return || event.text == " " {
-                    if root.highlight < root.rows.length {
+                    if root.highlight >= 0 && root.highlight < root.rows.length {
                         root.choose(root.highlight);
-                    } else if root.refresh-enabled {
+                    } else if root.highlight == root.rows.length && root.refresh-enabled {
                         root.refresh-requested();
                     }
                     return accept;
@@ -402,6 +442,7 @@ component MeetingPicker inherits Rectangle {
                             selected: index == root.current-index;
                             highlighted: index == root.highlight;
                             clicked => { root.choose(index); }
+                            focus-changed(focused) => { root.open = focused; }
                         }
                     }
                 }
@@ -421,10 +462,18 @@ component MeetingPicker inherits Rectangle {
                         }
                     }
 
-                    Rectangle {
+                    refresh-item := FocusScope {
+                        property <bool> highlighted: root.highlight == root.rows.length;
+
                         height: root.refresh-height;
-                        border-radius: 6px;
-                        background: root.refresh-enabled && (refresh-touch.has-hover || root.highlight == root.rows.length) ? #f1f3f6 : #ffffff;
+                        focus-on-click: false;
+                        focus-on-tab-navigation: false;
+                        changed highlighted => {
+                            if self.highlighted {
+                                self.focus();
+                            }
+                        }
+                        focus-changed-event => { root.open = self.has-focus; }
                         accessible-role: button;
                         accessible-label: "Refresh meetings";
                         accessible-enabled: root.refresh-enabled;
@@ -432,6 +481,13 @@ component MeetingPicker inherits Rectangle {
                             if root.refresh-enabled {
                                 root.refresh-requested();
                             }
+                        }
+
+                        Rectangle {
+                            border-radius: 6px;
+                            background: root.refresh-enabled && (refresh-touch.has-hover || refresh-item.highlighted) ? #f1f3f6 : #ffffff;
+                            border-width: refresh-item.highlighted && refresh-item.has-focus ? 1px : 0px;
+                            border-color: #1d4ed8;
                         }
 
                         refresh-touch := TouchArea {
@@ -495,6 +551,8 @@ export component MainWindow inherits Window {
     // Row 0 is always "No meeting"; the others are meetings, most relevant first.
     in-out property <[MeetingRow]> meeting-rows: [{ label: "No meeting", title: "No meeting" }];
     in-out property <int> meeting-index: 0;
+    // Bumped when the listed meetings or their order change.
+    in-out property <int> meeting-list-version: 0;
     in-out property <bool> meeting-refresh-enabled: true;
     in-out property <bool> meeting-change-confirmation-visible: false;
     in-out property <bool> saved: false;
@@ -583,6 +641,7 @@ export component MainWindow inherits Window {
                     enabled: !root.settings-visible;
                     checking: root.meeting-checking;
                     refresh-enabled: root.meeting-refresh-enabled;
+                    list-version: root.meeting-list-version;
                     icon-font: root.icon-font;
                     popup-width: toolbar.width;
                     popup-max-height: root.height - 80px;

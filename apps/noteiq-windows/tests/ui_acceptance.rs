@@ -653,13 +653,97 @@ fn the_keyboard_opens_the_list_and_chooses_a_row() {
     show_meetings(&window, &[STANDUP, REVIEW], 1);
 
     picker(&window).mock_single_click(PointerEventButton::Left);
+    settle();
+    let standup = element(&window, STANDUP, AccessibleRole::ListItem);
+    assert_eq!(
+        standup.accessible_item_selected(),
+        Some(true),
+        "the list opens on the attached meeting"
+    );
     key(&window, Key::DownArrow.into());
+    settle();
+    assert_eq!(
+        element(&window, REVIEW, AccessibleRole::ListItem).accessible_item_selected(),
+        Some(true),
+        "assistive technology follows the arrow keys"
+    );
+    assert_eq!(standup.accessible_item_selected(), Some(false));
+    assert!(
+        choices.borrow().is_empty(),
+        "arrows only move the highlight"
+    );
     key(&window, Key::Return.into());
     settle();
 
     assert_eq!(*choices.borrow(), vec![2]);
     assert_eq!(window.get_meeting_index(), 2);
     assert!(find(&window, REVIEW, AccessibleRole::ListItem).is_none());
+}
+
+#[test]
+fn a_reordered_list_clears_the_highlight_so_enter_cannot_choose_the_wrong_meeting() {
+    let window = open_window();
+    let choices = record_meeting_choices(&window);
+    let refreshes = counter();
+    window.on_meeting_refresh_requested(increment(&refreshes));
+    show_meetings(&window, &[STANDUP, REVIEW], 0);
+
+    picker(&window).mock_single_click(PointerEventButton::Left);
+    settle();
+    key(&window, Key::DownArrow.into());
+    settle();
+    show_meetings(&window, &[REVIEW, STANDUP], 0);
+    window.set_meeting_list_version(window.get_meeting_list_version() + 1);
+    settle();
+
+    key(&window, Key::Return.into());
+    settle();
+    assert!(
+        choices.borrow().is_empty(),
+        "nothing is highlighted any more"
+    );
+    assert_eq!(refreshes.get(), 0);
+    assert!(
+        find(&window, REVIEW, AccessibleRole::ListItem).is_some(),
+        "the list stays open"
+    );
+
+    key(&window, Key::DownArrow.into());
+    key(&window, Key::Return.into());
+    settle();
+    assert_eq!(
+        *choices.borrow(),
+        vec![0],
+        "the arrows start again from the attached meeting"
+    );
+}
+
+#[test]
+fn the_list_scrolls_to_the_attached_meeting_when_it_opens() {
+    let window = open_window();
+    window.window().set_size(LogicalSize::new(640.0, 540.0));
+    let labels: Vec<String> = (0..14)
+        .map(|hour| {
+            format!(
+                "Meeting {hour} · 04 Nov · {:02}:00–{:02}:30",
+                7 + hour,
+                7 + hour
+            )
+        })
+        .collect();
+    let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+    show_meetings(&window, &refs, 14);
+
+    picker(&window).mock_single_click(PointerEventButton::Left);
+    settle();
+    assert_inside_window(
+        &window,
+        &element(&window, &labels[13], AccessibleRole::ListItem),
+    );
+    assert_inside_window(
+        &window,
+        &element(&window, "Refresh meetings", AccessibleRole::Button),
+    );
 }
 
 #[test]

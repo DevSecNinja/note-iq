@@ -23,7 +23,7 @@ use noteiq_core::{
     workiq::{WorkiqClient, WorkiqError},
 };
 use slint::winit_030::{WinitWindowAccessor, winit::platform::windows::WindowExtWindows};
-use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::{
     cell::RefCell,
     path::PathBuf,
@@ -105,6 +105,9 @@ struct AppState {
     meeting_hint: String,
     /// The meeting list on screen. Row 0 is always "No meeting".
     meeting_rows: Vec<MeetingRow>,
+    /// The occurrences behind rows 1 and up; a change replaces the list model.
+    meeting_keys: Vec<(String, Option<DateTime<FixedOffset>>)>,
+    meeting_list_version: i32,
     meetings: Vec<Meeting>,
     /// The meetings behind picker options 1 and up, in the same order.
     picker_meetings: Vec<Meeting>,
@@ -138,6 +141,8 @@ impl AppState {
             status: "Ready".to_owned(),
             meeting_hint: String::new(),
             meeting_rows: vec![no_meeting_row()],
+            meeting_keys: Vec::new(),
+            meeting_list_version: 0,
             meetings: Vec::new(),
             picker_meetings: Vec::new(),
             last_meeting_refresh: None,
@@ -1311,11 +1316,29 @@ fn update_meeting_view(window: &MainWindow, state: &mut AppState, now: DateTime<
                 .map(|meeting| meeting_row(meeting, now)),
         )
         .collect::<Vec<_>>();
-    if rows != state.meeting_rows {
-        // The model is set before the index that refers to it.
+    let keys = state
+        .picker_meetings
+        .iter()
+        .map(|meeting| (meeting.id.clone(), meeting.start))
+        .collect::<Vec<_>>();
+    if keys != state.meeting_keys {
+        // The model is set before the index that refers to it. A new version clears the open
+        // list's keyboard highlight, so Enter cannot choose a meeting that moved under it.
         window.set_meeting_rows(ModelRc::new(VecModel::from(rows.clone())));
-        state.meeting_rows = rows;
+        state.meeting_keys = keys;
+        state.meeting_list_version = state.meeting_list_version.wrapping_add(1);
+        window.set_meeting_list_version(state.meeting_list_version);
+    } else if rows != state.meeting_rows {
+        // Details such as "In 5 min" change every minute; updating rows in place keeps an open
+        // list, its highlight, and keyboard focus where they are.
+        let model = window.get_meeting_rows();
+        for (index, row) in rows.iter().enumerate() {
+            if state.meeting_rows.get(index) != Some(row) {
+                model.set_row_data(index, row.clone());
+            }
+        }
     }
+    state.meeting_rows = rows;
     window.set_meeting_index(i32::try_from(selected).unwrap_or(0));
     state.meeting_hint = meeting_hint(state);
     refresh_view(window, state);
@@ -2248,6 +2271,41 @@ mod tests {
         assert!(expected[2].starts_with("older · "), "{}", expected[2]);
         assert_eq!(window.get_meeting_index(), 1);
         assert_eq!(window.get_meeting_hint(), "");
+    }
+
+    #[test]
+    fn only_a_changed_meeting_order_replaces_the_list_and_its_highlight() {
+        let now = fixed_now();
+        let (window, mut state) = window_with(
+            vec![
+                meeting_at("current", now, -10, 20),
+                meeting_at("later", now, 30, 60),
+            ],
+            now,
+        );
+        let version = window.get_meeting_list_version();
+        let model = window.get_meeting_rows();
+        assert_eq!(model.row_data(2).unwrap().details, "In 30 min · 30 min");
+
+        // A minute later only the details change; the open list keeps its rows.
+        apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(1));
+        assert_eq!(window.get_meeting_list_version(), version);
+        assert_eq!(model.row_data(2).unwrap().details, "In 29 min · 30 min");
+        assert_eq!(
+            window.get_meeting_rows().row_data(2).unwrap().details,
+            "In 29 min · 30 min"
+        );
+
+        state.meetings.push(meeting_at("earlier", now, -60, -30));
+        apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(1));
+        assert_eq!(window.get_meeting_list_version(), version + 1);
+        assert_eq!(
+            options(&window)[1..]
+                .iter()
+                .map(|label| label.split(" · ").next().unwrap())
+                .collect::<Vec<_>>(),
+            ["current", "earlier", "later"]
+        );
     }
 
     #[test]
