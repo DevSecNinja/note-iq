@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0](https://github.com/DevSecNinja/note-iq/compare/v0.1.0...v0.2.0) (2026-11-09)
+
+
+### Features
+
+* **release:** publish CycloneDX SBOMs with attestations ([81f1ce5](https://github.com/DevSecNinja/note-iq/commit/81f1ce5e03aa1bf0fed068989cb3892ca68641f3))
+* **release:** publish CycloneDX SBOMs with attestations ([643ac59](https://github.com/DevSecNinja/note-iq/commit/643ac59a78cd662ce4deef52cea1ac3248e11573))
+* **ui:** simplify the capture window ([fec416a](https://github.com/DevSecNinja/note-iq/commit/fec416a8505ac83e172d6bf56262a3cc8801a6d8))
+* **ui:** simplify the capture window ([66b0925](https://github.com/DevSecNinja/note-iq/commit/66b0925198f24ba944b581e8f9f14427cda7b47f))
+
+
+### Bug Fixes
+
+* make Windows rebuilds safe and checkout-aware ([9b56c16](https://github.com/DevSecNinja/note-iq/commit/9b56c16604c56646f9893f9206d88279c767a096))
+* make Windows rebuilds safe and checkout-aware ([e85a8dc](https://github.com/DevSecNinja/note-iq/commit/e85a8dcedcd1bb60e22f57020435d84fd6fcc0b2))
+* **ui:** keep the meeting list's keyboard highlight safe and accessible ([2a6b9ed](https://github.com/DevSecNinja/note-iq/commit/2a6b9ed693b71736e416252263a9bfcac18e1e62))
+
 ## 0.1.0 (2026-11-08)
 
 
