@@ -64,8 +64,11 @@ CI are `windows-2025` for x64 and `windows-11-arm` for ARM64; each build must
 verify that the produced executable matches its requested architecture.
 
 When NoteIQ is running, press **Win+Shift+N** to show its capture window.
-`Ctrl+S` saves without closing, **New note** or `Ctrl+N` safely finishes the
-current capture and begins a new one, and the tray
+The toolbar next to the meeting list has three icon buttons: **New note**
+(＋, or `Ctrl+N`) safely finishes the current capture and begins a new one,
+**Open note** (shown once the note is saved) opens its Markdown file, and
+**Settings** (⚙) opens the settings panel. Hover over a button for its name.
+Notes save automatically; `Ctrl+S` saves at once. The tray
 menu provides Show, New note, and Quit actions. The app registers
 `noteiq://new` for the current Windows user; a PowerToys Command Palette
 command can invoke `noteiq.exe new` or the registered URI.
@@ -99,9 +102,12 @@ embedded NoteIQ icon. The build generates 16-256px Windows icon sizes from
 runtime. If an older pinned shortcut still shows a generic icon after an update,
 unpin it and pin the rebuilt executable again.
 
-The meeting dropdown shows the selected meeting or **No meeting** without a
-redundant status caption. Extra meeting messages appear only during lookup or
-when lookup fails.
+The window has no header or **Save** button. A single line under the note shows
+the save status, such as `Saved · 14:41`, and turns red only for problems. The
+meeting list shows the selected meeting or **No meeting**, with a green **Now**
+tag while that meeting is in progress. A hint below it appears only when meeting
+lookup has a problem; while a lookup runs, the list itself says **Checking your
+calendar…**.
 
 Selecting a meeting opens its existing saved NoteIQ capture, if one exists in
 the selected destination's `captures/YYYY/MM` history. The current draft is saved
@@ -183,7 +189,7 @@ retained while editing and deleted when the capture is closed.
 
 If the destination folder is unavailable, NoteIQ keeps your text and shows
 **Choose folder**. It retries automatically after 5 seconds, doubling the pause
-up to one minute, so the log is not flooded; **Save** or `Ctrl+S` retries at once.
+up to one minute, so the log is not flooded; `Ctrl+S` retries at once.
 
 ### Note filenames
 
@@ -196,9 +202,8 @@ The **Note filename** setting names each note. The default,
 | `{time}`    | The capture's local time, `HHmm`                                                    |
 | `{title}`   | A safe slug of the attached meeting's name, else of the note's first non-empty line |
 
-The `.md` extension is added automatically. **Use date–title style** fills in
-`{date}-{title}`, the naming used by the vault's own captures, and **Use default
-style** restores the default. Settings shows an example name while you type;
+The `.md` extension is added automatically. Use `{date}-{title}` to match the
+naming used by the vault's own captures. Settings shows an example name while you type;
 press **Enter** or **Done** to apply it. A template is rejected, with an
 explanation and the previous setting kept, if it is empty or contains a folder
 separator, an unknown placeholder, unbalanced braces, a control character, a
@@ -393,29 +398,34 @@ SmartScreen may still show an unknown-publisher warning.
 
 The **Meeting** list at the top of the note shows which meeting is attached. Its
 first entry is always **No meeting**; the others are retrieved meetings, each
-labelled with its title, date, and local time, for example
-`Project review · 04 Nov · 14:00–14:30`. Meetings in progress come first, then
-earlier meetings (most recent first), then upcoming ones. Declined and
-cancelled meetings are not listed, although a meeting already attached to the
-note stays listed even if a later lookup no longer returns it. Until a lookup
-finds meetings, the list only offers **No meeting** and is unavailable.
+on two lines. The start time sits in a column on the left, the title on the
+first line is shortened with "…" when it does not fit, and the second line adds
+details such as **Now**, `ends 15:00`, `In 1 h 20 min`, `Ended 10:00`, or the
+day for other dates, followed by the length, **Tentative** when you replied
+tentatively, the organizer, and the number of people invited. Earlier meetings are
+shown in grey. Screen readers hear the title, date, and time, for example
+`Project review · 04 Nov · 14:00–14:30`, followed by the details. Meetings in
+progress come first, then earlier meetings (most recent first), then upcoming
+ones. Declined and cancelled meetings are not listed, although a meeting already
+attached to the note stays listed even if a later lookup no longer returns it.
+**Refresh meetings** is always the last entry, pinned below the meetings.
 
 Choosing an entry attaches it at once unless a saved note is already connected
 to another meeting, in which case NoteIQ asks whether to change the meeting on
 the existing note or create a blank note for the selected meeting. Choosing
 **No meeting** removes all meeting and invitee fields from the saved note
 without changing its text or ID.
-With the list closed, the arrow keys step through the entries; with it open,
-**Enter** chooses and **Escape** closes it without a change. Each change is
-saved after the usual 800 ms autosave pause, so stepping through the list does
-not rewrite the file at every step.
+With the picker focused, **Enter**, **Space**, or an arrow key opens the list.
+In the list, the arrow keys move between entries, **Enter** chooses one, and
+**Escape** closes it without a change. Each change is saved after the usual
+800 ms autosave pause.
 
 NoteIQ attaches a meeting automatically only when exactly one timed meeting is
 in progress and **Connect to my current meeting automatically** is on. All-day
 events are never attached automatically, and an RSVP is not treated as proof of
 attendance: if meetings overlap, the note stays on **No meeting** until you
 choose one. Your own choice, including **No meeting**, always wins for that
-note; neither **Refresh** nor a later lookup replaces it. Choosing the meeting
+note; neither **Refresh meetings** nor a later lookup replaces it. Choosing the meeting
 that was attached automatically confirms it in the same way. **New note** starts
 again with automatic selection.
 
@@ -433,24 +443,18 @@ contacting WorkIQ, so a note can pick up a meeting that starts while you write:
 Nothing is attached automatically while the last lookup has failed. Turning
 automatic connection off keeps the meeting that is already attached.
 
-The hint under the list explains the current state:
+While a lookup runs, the closed list shows **Checking your calendar…** when no
+meeting is selected, and **Refresh meetings** shows the same text and waits;
+cached meetings stay usable. A hint below the list appears only for problems:
 
-| Hint                                                 | Meaning                                                                |
-| ---------------------------------------------------- | ---------------------------------------------------------------------- |
-| Checking your calendar…                              | A lookup is running; cached meetings stay usable and **Refresh** waits |
-| Connected automatically · in progress                | It is the only meeting in progress; "· ended" once it is over          |
-| Selected for this note                               | You chose this meeting                                                 |
-| No meeting attached to this note                     | You chose **No meeting**                                               |
-| 2 meetings in progress — choose one                  | Meetings overlap, so none was attached                                 |
-| 1 meeting in progress — choose it to attach          | It began more than 15 minutes after you started this note              |
-| No meeting in progress                               | No timed meeting is happening right now                                |
-| No meetings found. You can keep writing.             | The lookup returned no meetings to list                                |
-| Automatic meeting connection is off                  | The setting is off; choose a meeting yourself                          |
-| Meeting lookup unavailable. WorkIQ comes with Scout. | Scout's WorkIQ executable was not found                                |
-| Couldn't refresh meetings. Showing earlier results.  | The lookup failed; earlier results remain                              |
+| Hint                                                 | Meaning                                   |
+| ---------------------------------------------------- | ----------------------------------------- |
+| Meeting lookup unavailable. WorkIQ comes with Scout. | Scout's WorkIQ executable was not found   |
+| Couldn't refresh meetings. Showing earlier results.  | The lookup failed; earlier results remain |
 
 Other lookup problems, such as needing to sign in to Scout, are explained in
-the same place. Save progress and save errors appear in the footer instead.
+the same place. Save progress and save errors appear in the status line under
+the note instead.
 
 WorkIQ returns a limited number of results per search, so NoteIQ asks for
 meetings happening now, starting in the next hour, and today in one lookup and
@@ -460,7 +464,7 @@ your Windows time zone.
 The meeting list is cached in memory for the life of the tray process. **New
 note**, Ctrl+N, and reopening a closed capture reuse it immediately and
 re-evaluate which meeting is current. WorkIQ is asked again when NoteIQ starts
-and when you press **Refresh**. Opening a capture or changing the automatic
+and when you choose **Refresh meetings**. Opening a capture or changing the automatic
 connection setting also asks again when the list is more than five minutes old
 or the last lookup failed. A lookup that is already running is reused, meetings
 missing from a newer result stay in the list, and a failed refresh leaves the
@@ -492,8 +496,8 @@ set in the environment.
 Meeting searches share a 45-second limit, with up to 15 additional seconds for
 optional RSVP details. Each handshake request has its own 15-second limit.
 
-If meeting lookup fails, press **Refresh** next to the meeting list to retry,
-confirm Scout is
+If meeting lookup fails, open the meeting list and choose **Refresh meetings**
+to retry, confirm Scout is
 installed and signed in, and verify network access. If a folder is unavailable
 or unwritable, select another destination in Settings; NoteIQ does not silently
 switch folders.

@@ -1,4 +1,4 @@
-use crate::ui_generated::MainWindow;
+use crate::ui_generated::{MainWindow, MeetingRow};
 use crate::{
     error_ui::meeting_failure,
     foreground,
@@ -15,7 +15,7 @@ use noteiq_core::{
     capture::CaptureController,
     destination::{Destination, DestinationError},
     diagnostics::{DiagnosticEvent, DiagnosticOperation, FailureClass},
-    meeting::{browse_meetings, choice_label},
+    meeting::{browse_meetings, choice_label, list_entry},
     model::{Capture, CaptureSource, Meeting, MeetingDecision},
     note_filename::NoteFilename,
     saved_note::{SavedNoteError, find_meeting_note, same_occurrence},
@@ -23,7 +23,7 @@ use noteiq_core::{
     workiq::{WorkiqClient, WorkiqError},
 };
 use slint::winit_030::{WinitWindowAccessor, winit::platform::windows::WindowExtWindows};
-use slint::{ComponentHandle, ModelRc, SharedString, Timer, TimerMode, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::{
     cell::RefCell,
     path::PathBuf,
@@ -57,8 +57,40 @@ const MEETING_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 /// How often an open note re-checks the cached meetings against the clock, so a meeting that
 /// starts while the note is open is picked up without another calendar lookup.
 const REEVALUATION_INTERVAL: Duration = Duration::from_secs(60);
-const CHECKING_CALENDAR: &str = "Checking your calendar…";
 const NO_MEETING: &str = "No meeting";
+
+fn no_meeting_row() -> MeetingRow {
+    MeetingRow {
+        label: NO_MEETING.into(),
+        title: NO_MEETING.into(),
+        ..MeetingRow::default()
+    }
+}
+
+fn meeting_row(meeting: &Meeting, now: DateTime<FixedOffset>) -> MeetingRow {
+    let entry = list_entry(meeting, now);
+    MeetingRow {
+        label: choice_label(meeting).into(),
+        time: entry.time.into(),
+        title: entry.title.into(),
+        details: entry.details.into(),
+        now: entry.now,
+        past: entry.past,
+    }
+}
+
+/// Segoe Fluent Icons ships with Windows 11; Windows 10 has the same glyphs in Segoe MDL2 Assets.
+fn icon_font() -> &'static str {
+    let fonts = std::env::var_os("WINDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("Fonts");
+    if fonts.join("SegoeIcons.ttf").exists() {
+        "Segoe Fluent Icons"
+    } else {
+        "Segoe MDL2 Assets"
+    }
+}
 
 struct AppState {
     capture: CaptureController,
@@ -71,8 +103,11 @@ struct AppState {
     note_filename: NoteFilename,
     status: String,
     meeting_hint: String,
-    /// The picker text on screen. Option 0 is always "No meeting".
-    meeting_options: Vec<String>,
+    /// The meeting list on screen. Row 0 is always "No meeting".
+    meeting_rows: Vec<MeetingRow>,
+    /// The occurrences behind rows 1 and up; a change replaces the list model.
+    meeting_keys: Vec<(String, Option<DateTime<FixedOffset>>)>,
+    meeting_list_version: i32,
     meetings: Vec<Meeting>,
     /// The meetings behind picker options 1 and up, in the same order.
     picker_meetings: Vec<Meeting>,
@@ -104,8 +139,10 @@ impl AppState {
             settings_path,
             note_filename,
             status: "Ready".to_owned(),
-            meeting_hint: CHECKING_CALENDAR.to_owned(),
-            meeting_options: vec![NO_MEETING.to_owned()],
+            meeting_hint: String::new(),
+            meeting_rows: vec![no_meeting_row()],
+            meeting_keys: Vec::new(),
+            meeting_list_version: 0,
             meetings: Vec::new(),
             picker_meetings: Vec::new(),
             last_meeting_refresh: None,
@@ -145,8 +182,25 @@ impl AppState {
         self.settings.save(&self.settings_path)
     }
 
+    /// The footer stays empty while there is nothing to report.
     fn display_status(&self) -> &str {
-        self.note_lookup_error.as_deref().unwrap_or(&self.status)
+        match self.note_lookup_error.as_deref() {
+            Some(error) => error,
+            None if self.status == "Ready" => "",
+            None => &self.status,
+        }
+    }
+
+    fn status_is_error(&self) -> bool {
+        self.destination_error
+            || self.note_lookup_error.is_some()
+            || self.status.starts_with("Could not")
+    }
+
+    /// A lookup is running, or the first one has not reported yet.
+    fn meeting_checking(&self) -> bool {
+        self.lookup_pending
+            || (self.last_meeting_refresh.is_none() && self.last_lookup_error.is_none())
     }
 }
 
@@ -261,6 +315,7 @@ pub fn run(
 fn configure_view(window: &MainWindow, state: &Rc<RefCell<AppState>>) {
     let mut state = state.borrow_mut();
     let now = Local::now().fixed_offset();
+    window.set_icon_font(icon_font().into());
     window.set_note_text(state.capture.capture.body.clone().into());
     reset_settings_view(window, &state, now);
     update_meeting_view(window, &mut state, now);
@@ -288,6 +343,7 @@ fn bind_callbacks(
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_saved(false);
                 ui.set_status_text(state.display_status().into());
+                ui.set_status_error(state.status_is_error());
             }
         });
     }
@@ -323,13 +379,15 @@ fn bind_callbacks(
                 return;
             };
             let path = state.borrow().capture.capture.path.clone();
-            match path {
+            let (message, error) = match path {
                 Some(path) => match open_note(&path) {
-                    Ok(()) => ui.set_status_text("Opened the saved note.".into()),
-                    Err(message) => ui.set_status_text(message.into()),
+                    Ok(()) => ("Opened the saved note.".to_owned(), false),
+                    Err(message) => (message, true),
                 },
-                None => ui.set_status_text("Save the note before opening it.".into()),
-            }
+                None => ("Save the note before opening it.".to_owned(), false),
+            };
+            ui.set_status_text(message.into());
+            ui.set_status_error(error);
         });
     }
     {
@@ -742,12 +800,9 @@ fn persist_metadata_change(state: &mut AppState) {
 
 fn save_state(state: &mut AppState) {
     match state.save() {
-        Ok(Some(path)) => {
+        Ok(Some(_)) => {
             state.destination_error = false;
-            state.status = format!(
-                "Saved {}",
-                path.file_name().unwrap_or_default().to_string_lossy()
-            );
+            state.status = format!("Saved · {}", Local::now().format("%H:%M"));
         }
         Ok(None) => {
             state.destination_error = false;
@@ -1253,27 +1308,46 @@ fn update_meeting_view(window: &MainWindow, state: &mut AppState, now: DateTime<
         None => 0,
     };
     state.picker_meetings = choices;
-    let options = std::iter::once(NO_MEETING.to_owned())
-        .chain(state.picker_meetings.iter().map(choice_label))
+    let rows = std::iter::once(no_meeting_row())
+        .chain(
+            state
+                .picker_meetings
+                .iter()
+                .map(|meeting| meeting_row(meeting, now)),
+        )
         .collect::<Vec<_>>();
-    if options != state.meeting_options {
-        // Replacing the model while a list is open would close it, so it only happens when the
-        // options really changed. The model is set before the index that refers to it.
-        let model = options
-            .iter()
-            .map(|option| SharedString::from(option.as_str()))
-            .collect::<Vec<_>>();
-        window.set_meeting_options(ModelRc::new(VecModel::from(model)));
-        state.meeting_options = options;
+    let keys = state
+        .picker_meetings
+        .iter()
+        .map(|meeting| (meeting.id.clone(), meeting.start))
+        .collect::<Vec<_>>();
+    if keys != state.meeting_keys {
+        // The model is set before the index that refers to it. A new version clears the open
+        // list's keyboard highlight, so Enter cannot choose a meeting that moved under it.
+        window.set_meeting_rows(ModelRc::new(VecModel::from(rows.clone())));
+        state.meeting_keys = keys;
+        state.meeting_list_version = state.meeting_list_version.wrapping_add(1);
+        window.set_meeting_list_version(state.meeting_list_version);
+    } else if rows != state.meeting_rows {
+        // Details such as "In 5 min" change every minute; updating rows in place keeps an open
+        // list, its highlight, and keyboard focus where they are.
+        let model = window.get_meeting_rows();
+        for (index, row) in rows.iter().enumerate() {
+            if state.meeting_rows.get(index) != Some(row) {
+                model.set_row_data(index, row.clone());
+            }
+        }
     }
+    state.meeting_rows = rows;
     window.set_meeting_index(i32::try_from(selected).unwrap_or(0));
     state.meeting_hint = meeting_hint(state);
     refresh_view(window, state);
 }
 
+/// Explains lookup problems only; a running lookup shows in the meeting list instead.
 fn meeting_hint(state: &AppState) -> String {
     if state.lookup_pending {
-        return CHECKING_CALENDAR.to_owned();
+        return String::new();
     }
     if let Some(error) = state.last_lookup_error.as_ref() {
         return match error {
@@ -1287,16 +1361,14 @@ fn meeting_hint(state: &AppState) -> String {
             _ => error.user_message().to_owned(),
         };
     }
-    if state.last_meeting_refresh.is_none() {
-        return CHECKING_CALENDAR.to_owned();
-    }
     String::new()
 }
 
 fn refresh_view(window: &MainWindow, state: &AppState) {
     window.set_status_text(state.display_status().into());
+    window.set_status_error(state.status_is_error());
     window.set_meeting_hint(state.meeting_hint.clone().into());
-    window.set_meeting_picker_enabled(!state.picker_meetings.is_empty());
+    window.set_meeting_checking(state.meeting_checking());
     window.set_meeting_refresh_enabled(!state.lookup_pending);
     window.set_destination_label(state.settings.destination_root.display().to_string().into());
     window.set_auto_connect(state.settings.auto_connect_meeting);
@@ -1392,9 +1464,9 @@ mod tests {
 
     fn options(window: &MainWindow) -> Vec<String> {
         window
-            .get_meeting_options()
+            .get_meeting_rows()
             .iter()
-            .map(|option| option.to_string())
+            .map(|row| row.label.to_string())
             .collect()
     }
 
@@ -2010,8 +2082,9 @@ mod tests {
         assert_eq!(state.picker_meetings.len(), 2);
         assert_eq!(attached_id(&state), Some("current"));
         assert_eq!(window.get_meeting_index(), 1);
-        assert!(
-            window.get_meeting_picker_enabled(),
+        assert_eq!(
+            options(&window).len(),
+            3,
             "older meetings remain selectable while connected"
         );
         assert_eq!(state.lookup_id, 4);
@@ -2028,7 +2101,8 @@ mod tests {
         start_new_capture_state(&window, &mut state, &sender);
         assert_eq!(state.lookup_id, 4);
         assert!(state.lookup_pending);
-        assert_eq!(window.get_meeting_hint(), CHECKING_CALENDAR);
+        assert_eq!(window.get_meeting_hint(), "");
+        assert!(window.get_meeting_checking());
         assert!(!window.get_meeting_refresh_enabled());
     }
 
@@ -2045,7 +2119,7 @@ mod tests {
         assert!(!state.lookup_pending);
         assert_eq!(state.picker_meetings.len(), 2);
         assert_eq!(window.get_meeting_index(), 1);
-        assert!(window.get_meeting_picker_enabled());
+        assert!(!window.get_meeting_checking());
         assert!(window.get_meeting_refresh_enabled());
         assert_eq!(
             window.get_meeting_hint(),
@@ -2186,11 +2260,52 @@ mod tests {
             choice_label(&state.meetings[0]),
         ];
         assert_eq!(options(&window), expected);
-        assert_eq!(state.meeting_options, expected);
+        let rows = window.get_meeting_rows();
+        let current = rows.row_data(1).unwrap();
+        assert_eq!(current.title, "current");
+        assert!(current.now && !current.past);
+        assert!(current.details.starts_with("ends "), "{}", current.details);
+        let older = rows.row_data(2).unwrap();
+        assert!(older.past && !older.now);
         assert!(expected[1].starts_with("current · "), "{}", expected[1]);
         assert!(expected[2].starts_with("older · "), "{}", expected[2]);
         assert_eq!(window.get_meeting_index(), 1);
         assert_eq!(window.get_meeting_hint(), "");
+    }
+
+    #[test]
+    fn only_a_changed_meeting_order_replaces_the_list_and_its_highlight() {
+        let now = fixed_now();
+        let (window, mut state) = window_with(
+            vec![
+                meeting_at("current", now, -10, 20),
+                meeting_at("later", now, 30, 60),
+            ],
+            now,
+        );
+        let version = window.get_meeting_list_version();
+        let model = window.get_meeting_rows();
+        assert_eq!(model.row_data(2).unwrap().details, "In 30 min · 30 min");
+
+        // A minute later only the details change; the open list keeps its rows.
+        apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(1));
+        assert_eq!(window.get_meeting_list_version(), version);
+        assert_eq!(model.row_data(2).unwrap().details, "In 29 min · 30 min");
+        assert_eq!(
+            window.get_meeting_rows().row_data(2).unwrap().details,
+            "In 29 min · 30 min"
+        );
+
+        state.meetings.push(meeting_at("earlier", now, -60, -30));
+        apply_available_meetings_at(&window, &mut state, now + TimeDelta::minutes(1));
+        assert_eq!(window.get_meeting_list_version(), version + 1);
+        assert_eq!(
+            options(&window)[1..]
+                .iter()
+                .map(|label| label.split(" · ").next().unwrap())
+                .collect::<Vec<_>>(),
+            ["current", "earlier", "later"]
+        );
     }
 
     #[test]
@@ -2286,8 +2401,9 @@ mod tests {
         assert_eq!(attached_id(&state), None);
         assert_eq!(window.get_meeting_index(), 0);
         assert_eq!(window.get_meeting_hint(), "");
-        assert!(
-            window.get_meeting_picker_enabled(),
+        assert_eq!(
+            options(&window).len(),
+            2,
             "an upcoming meeting can be chosen early"
         );
 
@@ -2331,7 +2447,7 @@ mod tests {
             window.get_meeting_hint(),
             "Couldn't refresh meetings. Showing earlier results."
         );
-        assert!(window.get_meeting_picker_enabled());
+        assert_eq!(options(&window).len(), 2);
 
         state.lookup_pending = true;
         process_meeting_result(&window, &mut state, Ok(Vec::new()), Instant::now());
@@ -2359,8 +2475,8 @@ mod tests {
         let now = Local::now().fixed_offset();
         state.capture.capture.created_at = now;
         update_meeting_view(&window, &mut state, now);
-        assert_eq!(window.get_meeting_hint(), CHECKING_CALENDAR);
-        assert!(!window.get_meeting_picker_enabled());
+        assert_eq!(window.get_meeting_hint(), "");
+        assert!(window.get_meeting_checking());
         assert_eq!(options(&window), [NO_MEETING]);
 
         state.lookup_pending = true;
@@ -2375,6 +2491,7 @@ mod tests {
             "Meeting lookup unavailable. WorkIQ comes with Scout."
         );
         assert!(window.get_meeting_refresh_enabled());
+        assert!(!window.get_meeting_checking());
 
         state.lookup_pending = true;
         process_meeting_result(
@@ -2391,7 +2508,7 @@ mod tests {
         state.lookup_pending = true;
         process_meeting_result(&window, &mut state, Ok(Vec::new()), Instant::now());
         assert_eq!(window.get_meeting_hint(), "");
-        assert!(!window.get_meeting_picker_enabled());
+        assert_eq!(options(&window), [NO_MEETING]);
 
         state.meetings = vec![
             meeting_at("first", now, -10, 20),

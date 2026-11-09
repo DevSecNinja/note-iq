@@ -100,10 +100,11 @@ notes, one optional WorkIQ child process for bounded meeting lookups.
 
 ### Windows application (`apps/noteiq-windows`)
 
-- `ui/main.slint`: focused editor; a Meeting list (No meeting first,
-  unnumbered) with Refresh and a state hint; header New note and Settings;
-  footer save status, Open note, and Save; settings including the note filename
-  template. The window's native title-bar close button closes the capture.
+- `ui/main.slint`: focused editor; a toolbar with the Meeting list (No meeting
+  first, two-line rows, Refresh meetings pinned last) and New note, Open note,
+  and Settings icon buttons; a problem-only meeting hint; a single save status
+  line; settings including the note filename template. The window's native
+  title-bar close button closes the capture.
 - `ui.rs`: application state, meeting lookups, cache and 60-second
   re-evaluation, picker commits, hints, and save/close flow.
 - `settings_ui.rs`, `error_ui.rs`, `meeting_ui.rs`: the notes-folder picker,

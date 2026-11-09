@@ -179,7 +179,10 @@
 ### Meeting picker and automatic selection
 
 - **Decision**: One Meeting list whose first option is No meeting, unnumbered
-  meeting options, a Refresh button, and a hint below for meeting state. Only
+  meeting options, and a hint below for meeting problems. Each meeting is a
+  two-line row (time column, title, then details such as Now, length,
+  organizer, and invitee count), and Refresh meetings is pinned as the list's
+  last entry. Only
   committed choices are applied, an explicit choice is kept for that note, and
   automatic selection is re-evaluated every 60 seconds from the cache so an
   empty note snaps to a meeting once it starts.
