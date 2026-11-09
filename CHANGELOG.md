@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/DevSecNinja/note-iq/compare/v0.2.1...v0.2.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* **release:** add a serial number so actions/attest accepts the SBOMs ([11172a2](https://github.com/DevSecNinja/note-iq/commit/11172a23aaa3ca9b24c1872b199abce4777ab768))
+* **release:** add a serial number so actions/attest accepts the SBOMs ([477dbe6](https://github.com/DevSecNinja/note-iq/commit/477dbe6aa5382c81adb2150eea1b53bfb076cf4f))
+
 ## [0.2.1](https://github.com/DevSecNinja/note-iq/compare/v0.2.0...v0.2.1) (2026-11-09)
 
 
