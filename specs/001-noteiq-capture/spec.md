@@ -216,7 +216,7 @@ native packages, and users need a way to check package integrity and provenance.
 
 **Independent Test**: Exercise both native build jobs from one tag, verify each
 executable's PE architecture, inspect both ZIP contents, compare package hashes
-with `SHA256SUMS.txt`, verify attestations with GitHub CLI, and confirm the
+with their `.sha256` files, verify attestations with GitHub CLI, and confirm the
 existing Release Please draft is published without creating a second release.
 
 **Acceptance Scenarios**:
@@ -229,7 +229,7 @@ existing Release Please draft is published without creating a second release.
    tagged commit and their executable architectures are verified.
 3. **Given** both builds succeed, **When** release archives are prepared,
    **Then** each ZIP contains `noteiq.exe`, `README.md`, and `LICENSE`, and the
-   release includes `SHA256SUMS.txt` and GitHub attestations.
+   release includes a `.sha256` file per asset and GitHub attestations.
 4. **Given** Release Please has made a draft release, **When** the local release
    workflow finishes successfully, **Then** it uploads both packages and
    publishes that draft; it MUST NOT create an independent release.
@@ -390,7 +390,7 @@ existing Release Please draft is published without creating a second release.
   `Cargo.lock`, and create a draft release with tag creation enabled. On a
   `v*` tag or manual tag retry, release automation MUST build x64 and ARM64
   from the same tagged commit, package each executable with `README.md` and
-  `LICENSE`, generate `SHA256SUMS.txt` and GitHub attestations, and publish
+  `LICENSE`, generate a `.sha256` file per asset and GitHub attestations, and publish
   only the existing Release Please draft.
 - **FR-037**: Documentation MUST explain the Release Please GitHub App and
   repository settings required for automation, provide SHA-256 and GitHub

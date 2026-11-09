@@ -165,8 +165,8 @@ available, so repository-local workflows define the Rust jobs:
 - Local `.github/workflows/release.yml` runs for `v*` tags and manual tag
   retries, builds both Windows architectures from the same tagged commit
   through the same local `build-windows.yml`, packages each
-  executable with `README.md` and `LICENSE`, generates `SHA256SUMS.txt`,
-  produces GitHub attestations, then uploads to and publishes only the
+  executable with `README.md` and `LICENSE`, generates a `.sha256` file per
+  asset, produces GitHub attestations, then uploads to and publishes only the
   pre-existing Release Please draft.
 
 The central release-publish workflow is not used: it creates a release with

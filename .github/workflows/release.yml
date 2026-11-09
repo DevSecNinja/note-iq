@@ -122,25 +122,25 @@ jobs:
           from pathlib import Path
           output = Path("dist")
           output.mkdir()
-          checksums = []
           for arch in ("x64", "arm64"):
               archive = output / f"noteiq-{os.environ['RELEASE_TAG']}-windows-{arch}.zip"
               with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
                   bundle.write(Path("artifacts") / f"noteiq-windows-{arch}" / "noteiq.exe", "noteiq.exe")
                   for name in ("README.md", "LICENSE"):
                       bundle.write(name, name)
-              digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-              checksums.append(f"{digest}  {archive.name}\n")
-              sbom = Path("sbom") / f"noteiq-{os.environ['RELEASE_TAG']}-windows-{arch}.cdx.json"
-              (output / sbom.name).write_bytes(sbom.read_bytes())
-              digest = hashlib.sha256(sbom.read_bytes()).hexdigest()
-              checksums.append(f"{digest}  {sbom.name}\n")
-          (output / "SHA256SUMS.txt").write_text("".join(checksums), encoding="utf-8")
+              sbom = output / f"noteiq-{os.environ['RELEASE_TAG']}-windows-{arch}.cdx.json"
+              sbom.write_bytes((Path("sbom") / sbom.name).read_bytes())
+              for asset in (archive, sbom):
+                  digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+                  checksum = asset.with_name(asset.name + ".sha256")
+                  checksum.write_text(f"{digest}  {asset.name}\n", encoding="utf-8")
           PY
       - name: Attest distribution files
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: dist/*
+          subject-path: |
+            dist/*.zip
+            dist/*.cdx.json
       - name: Attest the x64 SBOM
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -160,16 +160,35 @@ jobs:
             echo "::error::Refusing to modify a published release"; exit 1;
           }
           gh release view "$RELEASE_TAG" --json body --jq .body > "$RUNNER_TEMP/release-notes.md"
-          cat >> "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          tag, repo = os.environ["RELEASE_TAG"], os.environ["GH_REPO"]
+          notes = Path(os.environ["RUNNER_TEMP"]) / "release-notes.md"
+          marker = "<!-- noteiq-downloads -->"
+          body = notes.read_text(encoding="utf-8").split(marker)[0].rstrip()
+          base = f"https://github.com/{repo}/releases/download/{tag}"
+          zips = {arch: f"noteiq-{tag}-windows-{arch}.zip" for arch in ("x64", "arm64")}
+          notes.write_text(f"""{body}
 
-          ## Windows downloads
+          {marker}
+          ---
 
-          Choose `windows-x64` for Intel/AMD or `windows-arm64` for Windows on ARM.
-          Verify the ZIP against `SHA256SUMS.txt` and its GitHub attestation:
-          `gh attestation verify <downloaded-zip> --repo DevSecNinja/note-iq`.
-          Each ZIP has a CycloneDX SBOM (`*.cdx.json`) listing the Rust crates in `noteiq.exe`,
+          ## Download
+
+          Download the portable ZIP matching your PC:
+
+          - **x64** (Intel/AMD): [{zips['x64']}]({base}/{zips['x64']})
+          - **ARM64**: [{zips['arm64']}]({base}/{zips['arm64']})
+
+          Extract the ZIP and run `noteiq.exe`; it needs no installer or administrator rights.
+          The executables are not code-signed, so Windows may show a SmartScreen warning.
+          Before accepting it, check the matching `.sha256` file and the GitHub attestation:
+          `gh attestation verify {zips['x64']} --repo {repo}`.
+
+          Each ZIP has a CycloneDX SBOM (`.cdx.json`) listing the Rust crates in `noteiq.exe`,
           with a signed SBOM attestation: add `--predicate-type https://cyclonedx.org/bom` to verify it.
-          These portable executables are not code-signed; Windows may show SmartScreen warnings.
-          NOTES
-          gh release upload "$RELEASE_TAG" dist/*.zip dist/*.cdx.json dist/SHA256SUMS.txt --clobber
+          """, encoding="utf-8")
+          PY
+          gh release upload "$RELEASE_TAG" dist/* --clobber
           gh release edit "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" --draft=false

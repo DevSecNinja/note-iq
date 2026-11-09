@@ -44,9 +44,9 @@ Expected: a native `noteiq.exe` under the requested target's
 ## Release artifact checks
 
 The release pipeline produces x64 and ARM64 ZIPs from one tagged
-commit, plus `SHA256SUMS.txt` and GitHub attestations. Compare a downloaded
-archive's `Get-FileHash -Algorithm SHA256` output with its entry in the
-checksum manifest, then verify its attestation:
+commit, plus a `.sha256` checksum file per asset and GitHub attestations.
+Compare a downloaded archive's `Get-FileHash -Algorithm SHA256` output with its
+`.sha256` file, then verify its attestation:
 
 ```powershell
 $repo = gh repo view --json nameWithOwner --jq .nameWithOwner
