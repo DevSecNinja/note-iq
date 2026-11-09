@@ -98,7 +98,8 @@ builds, and draft-release publishing remain repository-local. Local x64
 (emulated), ARM64, and WSL validation passed, including PE architecture
 verification. GitHub-hosted CI has not run: these changes are uncommitted and
 no remote writes were authorized. Release archives include the executable,
-README, LICENSE, a SHA-256 checksum manifest, and GitHub build attestations. See
+README, LICENSE, a CycloneDX SBOM per architecture, a SHA-256 checksum manifest,
+and GitHub build and SBOM attestations. See
 [setup and release verification](docs/setup.md#ci-cd-and-release-verification)
 for release verification, the tag-bound manual retry command, and required
 repository setup. Downloads are not Authenticode-signed; checksums and

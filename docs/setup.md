@@ -328,8 +328,8 @@ simple release type, initially `0.1.0`. Its configuration updates the root
 tags or by manual tag retry, builds both architectures from that exact tagged
 commit through the local reusable `build-windows.yml`, verifies each
 executable's architecture, and packages each ZIP with `noteiq.exe`,
-`README.md`, and `LICENSE`. It also publishes `SHA256SUMS.txt` and GitHub
-attestations. Publishing may only
+`README.md`, and `LICENSE`. It also publishes a CycloneDX SBOM per architecture,
+`SHA256SUMS.txt`, and GitHub attestations. Publishing may only
 complete an existing draft created by Release Please; it must not create a
 separate release. The central release-publish workflow is not suitable because
 it creates a release with `gh release create` instead of uploading assets to
@@ -378,7 +378,7 @@ After downloading a release archive, compare its hash with the matching entry
 in `SHA256SUMS.txt`:
 
 ```powershell
-Get-FileHash .\noteiq-win-x64.zip -Algorithm SHA256
+Get-FileHash .\noteiq-v0.2.0-windows-x64.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS.txt
 ```
 
@@ -387,11 +387,27 @@ archive name with the ARM64 package when appropriate):
 
 ```powershell
 $repo = gh repo view --json nameWithOwner --jq .nameWithOwner
-gh attestation verify .\noteiq-win-x64.zip --repo $repo
+gh attestation verify .\noteiq-v0.2.0-windows-x64.zip --repo $repo
 ```
 
-The checksums detect accidental corruption and attestations verify provenance;
-neither is code signing. Releases are not Authenticode-signed, so Windows
+Each ZIP also has a CycloneDX 1.5 SBOM, such as
+`noteiq-v0.2.0-windows-x64.cdx.json`, listing the Rust crates compiled into that
+`noteiq.exe` with their versions, licenses, and package URLs.
+`scripts/release_sbom.py` generates it with `cargo-cyclonedx` and keeps only the
+crates that `cargo tree -e normal` reports for the release target, so crates
+used only by tests or builds are left out. The release workflow attests each
+SBOM against its ZIP:
+
+```powershell
+gh attestation verify .\noteiq-v0.2.0-windows-x64.zip --repo $repo --predicate-type https://cyclonedx.org/bom
+```
+
+To generate the SBOMs locally, install the version pinned in `release.yml`
+(`cargo install --locked cargo-cyclonedx --version 0.5.10`) and run
+`python scripts/release_sbom.py --tag v0.2.0 --output sbom`.
+
+The checksums detect accidental corruption, attestations verify provenance, and
+the SBOM lists the components; none of them is code signing. Releases are not Authenticode-signed, so Windows
 SmartScreen may still show an unknown-publisher warning.
 
 ### Choosing a meeting
