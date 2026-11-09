@@ -183,8 +183,15 @@ jobs:
 
           Extract the ZIP and run `noteiq.exe`; it needs no installer or administrator rights.
           The executables are not code-signed, so Windows may show a SmartScreen warning.
-          Before accepting it, check the matching `.sha256` file and the GitHub attestation:
-          `gh attestation verify {zips['x64']} --repo {repo}`.
+          Before accepting it, check the matching `.sha256` file and the GitHub attestation
+          for the ZIP you downloaded:
+
+          ```powershell
+          # x64
+          gh attestation verify {zips['x64']} --repo {repo}
+          # ARM64
+          gh attestation verify {zips['arm64']} --repo {repo}
+          ```
 
           Each ZIP has a CycloneDX SBOM (`.cdx.json`) listing the Rust crates in `noteiq.exe`,
           with a signed SBOM attestation: add `--predicate-type https://cyclonedx.org/bom` to verify it.
