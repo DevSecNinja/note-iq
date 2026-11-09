@@ -14,6 +14,42 @@ missing, unavailable, signed out, or unable to reach the WorkIQ service.
 
 ## Build and launch
 
+From an ordinary PowerShell window, this dependency-free helper detects native
+x64/ARM64, locates Visual Studio C++ tools, builds a locked release, verifies its
+architecture and GUI subsystem, and starts the executable:
+
+```powershell
+.\scripts\rebuild.ps1
+```
+
+When your current directory differs from the checkout containing the script,
+the helper asks whether to build the current directory, the script's checkout,
+or another directory. A blank answer cancels. The chosen directory must be a
+NoteIQ checkout root; its path is printed before updating, building, or launching.
+For an explicit choice without a prompt:
+
+```powershell
+.\scripts\rebuild.ps1 -BuildDirectory D:\projects\note-iq
+```
+
+Quit NoteIQ from its tray menu first. The helper refuses to build while NoteIQ
+is running, never force-kills it, and does not launch after a failed build.
+Windows cannot replace a running executable (`Access is denied`, OS error 5).
+Closing the capture window only hides the process.
+
+To fast-forward a clean **main** checkout before rebuilding and launching:
+
+```powershell
+.\scripts\rebuild.ps1 -Update
+```
+
+`-Update` refuses a dirty checkout or another branch; it never switches branches,
+stashes, resets, or resolves conflicts. Without it, the selected checkout is built
+without pulling. Use `-NoLaunch` to build only. The output stays in that checkout's
+`target\<native-target>\release\noteiq.exe`; startup paths are not changed.
+Run the helper from the checkout that your startup launcher uses to update that
+executable.
+
 From the repository root in a Windows developer shell with the matching
 architecture's C++ tools installed:
 
@@ -45,6 +81,12 @@ window is shown with the error rather than discarding the note.
 Running `noteiq new` (or opening `noteiq://new`) while a capture
 is open brings that capture to the front without discarding its text; after
 the capture is closed, it starts a fresh one.
+
+After rebuilding or updating NoteIQ, use tray **Quit** and confirm the old
+process has exited before launching the new executable. Starting a second
+executable only forwards to the running instance; it does not replace it.
+If a terminal still opens during meeting lookup or an already-fixed tray action
+still fails, check the running process's executable path before rebuilding again.
 
 The capture window uses a consistent light Fluent theme, including buttons,
 the meeting picker, and the editor, even when Windows uses dark app mode.
