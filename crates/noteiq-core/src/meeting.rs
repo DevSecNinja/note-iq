@@ -132,6 +132,8 @@ pub struct MeetingListEntry {
     pub details: String,
     /// The meeting is in progress; the list shows a "Now" marker before the details.
     pub now: bool,
+    /// Teams reports a transcript for the meeting; the list shows a "Transcribed" marker.
+    pub transcribed: bool,
     /// The meeting has ended; the list shows it in a quieter colour.
     pub past: bool,
 }
@@ -204,6 +206,7 @@ pub fn list_entry(meeting: &Meeting, now: DateTime<FixedOffset>) -> MeetingListE
         title,
         details: details.join(" · "),
         now: in_progress,
+        transcribed: meeting.has_transcript == Some(true),
         past,
     }
 }

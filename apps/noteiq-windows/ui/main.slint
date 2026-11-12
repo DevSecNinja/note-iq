@@ -9,6 +9,7 @@ export struct MeetingRow {
     title: string,
     details: string,
     now: bool,
+    transcribed: bool,
     past: bool,
 }
 
@@ -182,7 +183,7 @@ component MeetingListItem inherits FocusScope {
                 accessible-role: none;
             }
 
-            if root.entry.now || root.entry.details != "": HorizontalLayout {
+            if root.entry.now || root.entry.transcribed || root.entry.details != "": HorizontalLayout {
                 if root.entry.now: Text {
                     text: "Now";
                     color: #166534;
@@ -190,8 +191,15 @@ component MeetingListItem inherits FocusScope {
                     font-weight: 600;
                     accessible-role: none;
                 }
+                if root.entry.transcribed: Text {
+                    text: root.entry.now ? " · Transcribed" : "Transcribed";
+                    color: #6b21a8;
+                    font-size: 12px;
+                    font-weight: 600;
+                    accessible-role: none;
+                }
                 Text {
-                    text: root.entry.now && root.entry.details != "" ? " · " + root.entry.details : root.entry.details;
+                    text: (root.entry.now || root.entry.transcribed) && root.entry.details != "" ? " · " + root.entry.details : root.entry.details;
                     color: #5f6470;
                     font-size: 12px;
                     overflow: elide;
@@ -343,6 +351,27 @@ component MeetingPicker inherits Rectangle {
                     Text {
                         text: "Now";
                         color: #166534;
+                        font-size: 11px;
+                        font-weight: 600;
+                        accessible-role: none;
+                    }
+                }
+            }
+        }
+
+        if root.current.transcribed: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                background: #f3e8ff;
+                border-radius: 9px;
+                HorizontalLayout {
+                    padding-left: 7px;
+                    padding-right: 7px;
+                    padding-top: 1px;
+                    padding-bottom: 1px;
+                    Text {
+                        text: "Transcribed";
+                        color: #6b21a8;
                         font-size: 11px;
                         font-weight: 600;
                         accessible-role: none;

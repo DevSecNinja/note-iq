@@ -105,7 +105,8 @@ unpin it and pin the rebuilt executable again.
 The window has no header or **Save** button. A single line under the note shows
 the save status, such as `Saved · 14:41`, and turns red only for problems. The
 meeting list shows the selected meeting or **No meeting**, with a green **Now**
-tag while that meeting is in progress. A hint below it appears only when meeting
+tag while that meeting is in progress and a purple **Transcribed** tag when
+Teams reports a transcript for it. A hint below it appears only when meeting
 lookup has a problem; while a lookup runs, the list itself says **Checking your
 calendar…**.
 
@@ -470,7 +471,7 @@ The **Meeting** list at the top of the note shows which meeting is attached. Its
 first entry is always **No meeting**; the others are retrieved meetings, each
 on two lines. The start time sits in a column on the left, the title on the
 first line is shortened with "…" when it does not fit, and the second line adds
-details such as **Now**, `ends 15:00`, `In 1 h 20 min`, `Ended 10:00`, or the
+details such as **Now**, **Transcribed**, `ends 15:00`, `In 1 h 20 min`, `Ended 10:00`, or the
 day for other dates, followed by the length, **Tentative** when you replied
 tentatively, the organizer, and the number of people invited. Earlier meetings are
 shown in grey. Screen readers hear the title, date, and time, for example
@@ -578,6 +579,9 @@ in Notification Center until dismissed.
 While reminders are on, NoteIQ looks up meetings in the background every 30
 minutes, and every 2 minutes while a reminder waits for a fresh transcript
 status. Turning the setting off stops reminders and these lookups at once.
+Separately, while a meeting is in progress and the capture window is open,
+NoteIQ looks up meetings every 5 minutes so the **Transcribed** tag follows the
+call.
 
 NoteIQ is not a packaged app, so it registers the notification sender under
 `HKCU\Software\Classes\AppUserModelId\DevSecNinja.NoteIQ` with its name and

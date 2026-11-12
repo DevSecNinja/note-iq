@@ -15,7 +15,7 @@ use noteiq_core::{
     capture::CaptureController,
     destination::{Destination, DestinationError},
     diagnostics::{DiagnosticEvent, DiagnosticOperation, FailureClass},
-    meeting::{browse_meetings, choice_label, list_entry},
+    meeting::{browse_meetings, choice_label, list_entry, meetings_in_progress},
     model::{Capture, CaptureSource, Meeting, MeetingDecision},
     note_filename::NoteFilename,
     saved_note::{SavedNoteError, find_meeting_note, same_occurrence},
@@ -77,6 +77,9 @@ const REMINDER_LOOKUP_INTERVAL: Duration = Duration::from_secs(2 * 60);
 /// How often reminders refresh the calendar while nothing is due, so meetings added later in
 /// the day, or the next day's meetings, are known.
 const REMINDER_CALENDAR_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// How often meetings are looked up while one is in progress and the capture window is open,
+/// so a transcript that starts during the call shows up in the meeting list.
+const IN_CALL_LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const NO_MEETING: &str = "No meeting";
 
 fn no_meeting_row() -> MeetingRow {
@@ -89,12 +92,17 @@ fn no_meeting_row() -> MeetingRow {
 
 fn meeting_row(meeting: &Meeting, now: DateTime<FixedOffset>) -> MeetingRow {
     let entry = list_entry(meeting, now);
+    let mut label = choice_label(meeting);
+    if entry.transcribed {
+        label.push_str(" · Transcribed");
+    }
     MeetingRow {
-        label: choice_label(meeting).into(),
+        label: label.into(),
         time: entry.time.into(),
         title: entry.title.into(),
         details: entry.details.into(),
         now: entry.now,
+        transcribed: entry.transcribed,
         past: entry.past,
     }
 }
@@ -744,6 +752,11 @@ fn bind_callbacks(
             .is_none_or(|at| at.elapsed() >= REMINDER_CHECK_INTERVAL)
         {
             check_meeting_reminders(&mut state, &sender_for_timer, Local::now().fixed_offset());
+            refresh_meetings_during_call(
+                &mut state,
+                &sender_for_timer,
+                Local::now().fixed_offset(),
+            );
         }
         let _keep_tray_alive = &tray;
         if hotkeys
@@ -835,6 +848,28 @@ fn check_meeting_reminders(
         state.reminders.last_lookup = Some(Instant::now());
         start_meeting_lookup_state(state, sender, true);
     }
+}
+
+/// Looks up meetings every few minutes while one is in progress and the capture window is
+/// open, so the list's "Transcribed" marker follows the call. Shares the reminders' lookup
+/// clock, so the two never double up and a failing lookup is not retried in a tight loop.
+fn refresh_meetings_during_call(
+    state: &mut AppState,
+    sender: &Sender<AppEvent>,
+    now: DateTime<FixedOffset>,
+) {
+    if in_call_lookup_due(state, now) {
+        state.reminders.last_lookup = Some(Instant::now());
+        start_meeting_lookup_state(state, sender, true);
+    }
+}
+
+fn in_call_lookup_due(state: &AppState, now: DateTime<FixedOffset>) -> bool {
+    if !state.capture_open || meetings_in_progress(&state.meetings, now) == 0 {
+        return false;
+    }
+    let latest = state.reminders.last_lookup.max(state.last_meeting_refresh);
+    latest.is_none_or(|at| at.elapsed() >= IN_CALL_LOOKUP_INTERVAL)
 }
 
 /// Saves a reminder as shown once Windows confirms it, so a failed attempt is retried at the
@@ -2930,6 +2965,45 @@ mod tests {
         check_meeting_reminders(&mut state, &sender, now);
         assert!(jobs.try_recv().is_err(), "gives up after the last attempt");
         assert!(state.reminders.history.reminders.is_empty());
+    }
+
+    #[test]
+    fn meetings_are_looked_up_every_few_minutes_during_a_call_while_the_window_is_open() {
+        let now = Local::now().fixed_offset();
+        let (_window, mut state) = window_with(vec![meeting_at("current", now, -10, 20)], now);
+        assert!(!in_call_lookup_due(&state, now), "a fresh list is reused");
+
+        let stale = Instant::now().checked_sub(IN_CALL_LOOKUP_INTERVAL).unwrap();
+        state.last_meeting_refresh = Some(stale);
+        assert!(in_call_lookup_due(&state, now));
+        assert!(
+            !in_call_lookup_due(&state, now + chrono::TimeDelta::minutes(30)),
+            "not once the call has ended"
+        );
+        state.capture_open = false;
+        assert!(
+            !in_call_lookup_due(&state, now),
+            "not while the window is closed"
+        );
+
+        state.capture_open = true;
+        state.reminders.last_lookup = Some(Instant::now());
+        assert!(
+            !in_call_lookup_due(&state, now),
+            "a lookup that just started, even if it fails, is not repeated"
+        );
+    }
+
+    #[test]
+    fn transcribed_meetings_are_marked_in_the_list() {
+        let now = Local::now().fixed_offset();
+        let mut meeting = meeting_at("current", now, -10, 20);
+        meeting.has_transcript = Some(true);
+        let row = meeting_row(&meeting, now);
+        assert!(row.now && row.transcribed);
+        assert!(row.label.ends_with(" · Transcribed"));
+        meeting.has_transcript = None;
+        assert!(!meeting_row(&meeting, now).transcribed);
     }
 
     #[test]

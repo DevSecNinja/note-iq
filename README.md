@@ -141,7 +141,7 @@ template, such as **General meeting**, **1:1**, **Customer call**, or
 
 The **Meeting** list starts with **No meeting**, followed by current, earlier,
 and upcoming meetings on two lines: the time and title, then details such as
-**Now**, how long the meeting runs, the organizer, and how many people are invited. A note attaches automatically
+**Now**, **Transcribed**, how long the meeting runs, the organizer, and how many people are invited. A note attaches automatically
 when exactly one meeting is in progress, including one that starts while an
 empty note is open; a meeting you choose, or **No meeting**, is never replaced.
 The tray process retains the list between notes, and **Refresh meetings** at the
