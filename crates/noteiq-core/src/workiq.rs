@@ -428,6 +428,9 @@ fn collect_meetings(value: &Value, results: &mut Vec<Meeting>, incomplete: &mut 
                             .or_else(|| object.get("all_day"))
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
+                        has_transcript: ["isTranscriptAvailable", "hasTranscript"]
+                            .iter()
+                            .find_map(|key| object.get(*key).and_then(parse_flag)),
                     });
                 } else if title.is_some() {
                     *incomplete = true;
@@ -662,7 +665,11 @@ fn parse_retrieval_meeting(
             if item.get("key").and_then(Value::as_str) == Some("RSVP Info") {
                 item.get("value")
                     .and_then(Value::as_str)
-                    .and_then(|value| value.strip_prefix("Your response: "))
+                    .and_then(|value| {
+                        value
+                            .strip_prefix("Your response: ")
+                            .or_else(|| value.strip_prefix("User RSVP: "))
+                    })
                     .and_then(parse_rsvp)
             } else {
                 None
@@ -680,6 +687,10 @@ fn parse_retrieval_meeting(
         .or_else(|| metadata.and_then(|meeting| meeting.get("isAllDay")))
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let has_transcript = fields
+        .get("isTranscriptAvailable")
+        .map(String::as_str)
+        .and_then(parse_flag_text);
 
     Some(Meeting {
         id: id.to_owned(),
@@ -696,7 +707,23 @@ fn parse_retrieval_meeting(
         cancelled,
         declined,
         all_day,
+        has_transcript,
     })
+}
+
+/// Reads a yes/no flag that WorkIQ writes either as a JSON boolean or as text.
+fn parse_flag(value: &Value) -> Option<bool> {
+    value
+        .as_bool()
+        .or_else(|| value.as_str().and_then(parse_flag_text))
+}
+
+fn parse_flag_text(text: &str) -> Option<bool> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" => Some(true),
+        "false" | "no" => Some(false),
+        _ => None,
+    }
 }
 
 /// Reads WorkIQ's `- **field:** value` meeting summary lines. The first bold line without a

@@ -44,13 +44,16 @@ fn compile_icon() {
         icon.extend_from_slice(&offset.to_le_bytes());
         offset += length;
     }
+    let path =
+        std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo output directory"))
+            .join("noteiq.ico");
+    // Windows notifications show the app icon from a PNG file registered with the app ID.
+    std::fs::write(path.with_file_name("noteiq-64.png"), &frames[6])
+        .expect("write the NoteIQ notification icon");
     for frame in frames {
         icon.extend_from_slice(&frame);
     }
 
-    let path =
-        std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("Cargo output directory"))
-            .join("noteiq.ico");
     std::fs::write(&path, icon).expect("write the NoteIQ icon");
     winresource::WindowsResource::new()
         .set_icon(path.to_str().expect("icon path is UTF-8"))

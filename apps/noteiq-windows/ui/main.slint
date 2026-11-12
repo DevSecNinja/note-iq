@@ -1,4 +1,4 @@
-import { Button, CheckBox, LineEdit, Palette, ScrollView, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, TextEdit } from "std-widgets.slint";
 export { Palette }
 
 /// One row of the meeting list. Row 0 is always "No meeting".
@@ -559,12 +559,32 @@ export component MainWindow inherits Window {
     in-out property <bool> has-note: false;
     in-out property <bool> settings-visible: false;
     in-out property <bool> auto-connect: true;
+    in-out property <bool> meeting-reminders: true;
     in-out property <string> hotkey-text: "Win+Shift+N";
     in-out property <string> hotkey-error;
     in-out property <bool> hotkey-enabled: true;
     in-out property <string> note-filename-text: "{date}_{time}_{title}";
     in-out property <string> note-filename-preview;
     in-out property <string> note-filename-error;
+    // Meeting templates: built-ins first, then the user's. `template-ids` parallels the names.
+    in-out property <bool> templates-enabled: false;
+    in-out property <[string]> template-names: ["General meeting"];
+    in-out property <[string]> template-ids: ["general"];
+    in-out property <int> default-template-index: 0;
+    // The template offered for the open note.
+    in-out property <int> note-template-index: 0;
+    // The template shown in the Settings editor.
+    in-out property <int> edit-template-index: 0;
+    // The id of the template in the editor, which Save and Delete act on; empty for a new one.
+    in-out property <string> edit-template-id;
+    in-out property <string> template-name-text;
+    in-out property <string> template-body-text;
+    // False for built-in templates, which are read-only.
+    in-out property <bool> template-editable: false;
+    // The editor holds a template that has not been saved yet.
+    in-out property <bool> template-is-new: false;
+    in-out property <string> template-message;
+    in-out property <bool> template-message-error: false;
     in-out property <bool> destination-error: false;
     // Windows 10 has the same glyphs in Segoe MDL2 Assets.
     in-out property <string> icon-font: "Segoe Fluent Icons";
@@ -590,10 +610,19 @@ export component MainWindow inherits Window {
     callback settings-requested(bool);
     callback destination-requested();
     callback auto-connect-changed(bool);
+    callback meeting-reminders-changed(bool);
     callback hotkey-changed(string);
     callback hotkey-enabled-changed(bool);
     callback note-filename-edited(string);
     callback note-filename-changed(string);
+    callback templates-enabled-changed(bool);
+    callback default-template-chosen(int);
+    callback note-template-insert-requested(int);
+    callback template-edit-chosen(int);
+    // True starts from a copy of the template in the editor; false starts blank.
+    callback template-new-requested(bool);
+    callback template-save-requested(string, string);
+    callback template-delete-requested();
     callback new-note-requested();
     callback tray-action-requested(int);
 
@@ -749,6 +778,17 @@ export component MainWindow inherits Window {
                                 text: "Choose folder";
                                 clicked => { root.destination-requested(); }
                             }
+                            if root.templates-enabled: ComboBox {
+                                width: 180px;
+                                horizontal-stretch: 0;
+                                model: root.template-names;
+                                current-index <=> root.note-template-index;
+                                accessible-label: "Note template";
+                            }
+                            if root.templates-enabled: Button {
+                                text: "Insert template";
+                                clicked => { root.note-template-insert-requested(root.note-template-index); }
+                            }
                         }
                     }
                 }
@@ -807,6 +847,14 @@ export component MainWindow inherits Window {
                                     text: "Connect to my current meeting automatically";
                                     checked: root.auto-connect;
                                     toggled => { root.auto-connect-changed(self.checked); }
+                                }
+                                CheckBox {
+                                    text: "Suggest a note after untranscribed meetings";
+                                    checked: root.meeting-reminders;
+                                    toggled => {
+                                        root.meeting-reminders = self.checked;
+                                        root.meeting-reminders-changed(self.checked);
+                                    }
                                 }
                                 CheckBox {
                                     text: "Enable the global capture shortcut";
@@ -881,6 +929,118 @@ export component MainWindow inherits Window {
                                                 font-size: 12px;
                                                 wrap: word-wrap;
                                             }
+                                        }
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 8px;
+                                    padding-top: 4px;
+
+                                    Text {
+                                        text: "Meeting templates";
+                                        color: #20232a;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                    }
+                                    CheckBox {
+                                        text: "Insert a template into new meeting notes";
+                                        checked: root.templates-enabled;
+                                        toggled => {
+                                            root.templates-enabled = self.checked;
+                                            root.templates-enabled-changed(self.checked);
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        Text {
+                                            text: "Default";
+                                            color: #383b43;
+                                            font-size: 13px;
+                                            min-width: 96px;
+                                            vertical-alignment: center;
+                                        }
+                                        ComboBox {
+                                            model: root.template-names;
+                                            current-index <=> root.default-template-index;
+                                            accessible-label: "Default meeting template";
+                                            selected(value) => { root.default-template-chosen(self.current-index); }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        Text {
+                                            text: "Edit";
+                                            color: #383b43;
+                                            font-size: 13px;
+                                            min-width: 96px;
+                                            vertical-alignment: center;
+                                        }
+                                        ComboBox {
+                                            model: root.template-names;
+                                            current-index <=> root.edit-template-index;
+                                            accessible-label: "Template to edit";
+                                            selected(value) => { root.template-edit-chosen(self.current-index); }
+                                        }
+                                        Button {
+                                            text: "New";
+                                            accessible-label: "New template";
+                                            clicked => { root.template-new-requested(false); }
+                                        }
+                                        Button {
+                                            text: "Duplicate";
+                                            accessible-label: "Duplicate template";
+                                            clicked => { root.template-new-requested(true); }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        spacing: 10px;
+                                        Text {
+                                            text: "Name";
+                                            color: #383b43;
+                                            font-size: 13px;
+                                            min-width: 96px;
+                                            vertical-alignment: center;
+                                        }
+                                        LineEdit {
+                                            text <=> root.template-name-text;
+                                            read-only: !root.template-editable;
+                                            placeholder-text: "Weekly sync";
+                                            accessible-label: "Template name";
+                                            horizontal-stretch: 1;
+                                            edited(text) => { root.template-message = ""; }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        padding-left: 106px;
+                                        TextEdit {
+                                            height: 150px;
+                                            text <=> root.template-body-text;
+                                            read-only: !root.template-editable;
+                                            accessible-label: "Template text";
+                                            font-size: 13px;
+                                            edited(text) => { root.template-message = ""; }
+                                        }
+                                    }
+                                    HorizontalLayout {
+                                        padding-left: 106px;
+                                        spacing: 8px;
+                                        Text {
+                                            text: root.template-message != "" ? root.template-message : root.template-editable ? "Use {title}, {date}, {time}, {organizer}, and {attendees}." : "Built-in templates are read-only. Duplicate one to make your own.";
+                                            color: root.template-message-error ? #b91c1c : #5f6470;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                            min-width: 0px;
+                                            vertical-alignment: center;
+                                        }
+                                        if root.template-editable && !root.template-is-new: Button {
+                                            text: "Delete";
+                                            accessible-label: "Delete template";
+                                            clicked => { root.template-delete-requested(); }
+                                        }
+                                        if root.template-editable: Button {
+                                            text: "Save template";
+                                            clicked => { root.template-save-requested(root.template-name-text, root.template-body-text); }
                                         }
                                     }
                                 }

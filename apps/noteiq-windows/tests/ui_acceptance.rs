@@ -1000,3 +1000,125 @@ fn rejected_settings_keep_the_panel_open_and_explain_why() {
     click_button(&window, "Done");
     assert!(!window.get_settings_visible());
 }
+
+fn template_names(names: &[&str]) -> ModelRc<SharedString> {
+    ModelRc::new(VecModel::from(
+        names
+            .iter()
+            .map(|name| SharedString::from(*name))
+            .collect::<Vec<_>>(),
+    ))
+}
+
+#[test]
+fn meeting_templates_are_offered_for_the_note_only_once_enabled() {
+    let window = open_window();
+    assert!(find(&window, "Note template", AccessibleRole::Combobox).is_none());
+    assert!(!offers_button(&window, "Insert template"));
+    let toggles = Rc::new(RefCell::new(Vec::new()));
+    let sink = toggles.clone();
+    window.on_templates_enabled_changed(move |enabled| sink.borrow_mut().push(enabled));
+
+    // Tall enough that the whole Settings panel is visible without scrolling.
+    window.window().set_size(LogicalSize::new(760.0, 1400.0));
+    click_button(&window, "Settings");
+    element(
+        &window,
+        "Default meeting template",
+        AccessibleRole::Combobox,
+    );
+    element(&window, "Template to edit", AccessibleRole::Combobox);
+    let enable = element(
+        &window,
+        "Insert a template into new meeting notes",
+        AccessibleRole::Checkbox,
+    );
+    assert_eq!(
+        enable.accessible_checked(),
+        Some(false),
+        "templates are opt-in"
+    );
+    enable.invoke_accessible_default_action();
+    assert_eq!(*toggles.borrow(), vec![true]);
+    assert!(window.get_templates_enabled());
+    click_button(&window, "Done");
+    settle();
+    window.window().set_size(LogicalSize::new(760.0, 640.0));
+
+    let inserts = Rc::new(RefCell::new(Vec::new()));
+    let sink = inserts.clone();
+    window.on_note_template_insert_requested(move |index| sink.borrow_mut().push(index));
+    window.set_template_names(template_names(&["General meeting", "Stand-up"]));
+    window.set_note_template_index(1);
+    settle();
+    let picker = element(&window, "Note template", AccessibleRole::Combobox);
+    assert_eq!(picker.accessible_value().as_deref(), Some("Stand-up"));
+    assert_inside_window(&window, &picker);
+    click_button(&window, "Insert template");
+    assert_eq!(*inserts.borrow(), vec![1]);
+    assert_eq!(
+        window.get_note_text(),
+        "",
+        "Rust decides how the template is inserted"
+    );
+}
+
+#[test]
+fn built_in_templates_are_read_only_and_new_templates_can_be_saved() {
+    let window = open_window();
+    window.window().set_size(LogicalSize::new(760.0, 1400.0));
+    click_button(&window, "Settings");
+    window.set_template_name_text("General meeting".into());
+    window.set_template_body_text("### Agenda".into());
+    window.set_template_editable(false);
+    settle();
+    for label in ["Template name", "Template text"] {
+        assert_eq!(
+            element(&window, label, AccessibleRole::TextInput).accessible_read_only(),
+            Some(true),
+            "{label} of a built-in template"
+        );
+    }
+    assert!(!offers_button(&window, "Save template"));
+    assert!(!offers_button(&window, "Delete template"));
+
+    let (news, saves) = (
+        Rc::new(RefCell::new(Vec::new())),
+        Rc::new(RefCell::new(Vec::new())),
+    );
+    let sink = news.clone();
+    window.on_template_new_requested(move |copy| sink.borrow_mut().push(copy));
+    let sink = saves.clone();
+    window.on_template_save_requested(move |name, body| {
+        sink.borrow_mut().push((name.to_string(), body.to_string()));
+    });
+    element(&window, "Duplicate template", AccessibleRole::Button)
+        .invoke_accessible_default_action();
+    element(&window, "New template", AccessibleRole::Button).invoke_accessible_default_action();
+    assert_eq!(*news.borrow(), vec![true, false]);
+
+    window.set_template_editable(true);
+    window.set_template_is_new(true);
+    window.set_template_name_text("Weekly sync".into());
+    window.set_template_body_text("### Wins".into());
+    settle();
+    assert!(
+        !offers_button(&window, "Delete template"),
+        "a template that was never saved has nothing to delete"
+    );
+    element(&window, "Save template", AccessibleRole::Button).invoke_accessible_default_action();
+    assert_eq!(
+        *saves.borrow(),
+        vec![("Weekly sync".to_owned(), "### Wins".to_owned())]
+    );
+
+    let problem =
+        "Unknown placeholder: {owner}. Use {title}, {date}, {time}, {organizer}, or {attendees}.";
+    window.set_template_message(problem.into());
+    window.set_template_message_error(true);
+    settle();
+    assert!(shows_text(&window, problem));
+    window.set_template_is_new(false);
+    settle();
+    assert!(offers_button(&window, "Delete template"));
+}

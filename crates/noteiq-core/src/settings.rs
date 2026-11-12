@@ -30,6 +30,14 @@ pub struct Settings {
     pub author_name: Option<String>,
     /// Filename template for new notes, such as `{date}_{time}_{title}`.
     pub note_filename: String,
+    /// Show a Windows notification suggesting a note after an untranscribed meeting ends.
+    pub meeting_reminders_enabled: bool,
+    /// Minutes to wait after a meeting ends before suggesting a note.
+    pub meeting_reminder_delay_minutes: u32,
+    /// Insert a template into empty notes that are connected to a meeting.
+    pub meeting_templates_enabled: bool,
+    /// Identifier of the template applied to new meeting notes.
+    pub default_meeting_template: String,
 }
 
 impl Settings {
@@ -47,6 +55,10 @@ impl Settings {
             workiq_executable: None,
             author_name: None,
             note_filename: DEFAULT_NOTE_FILENAME.to_owned(),
+            meeting_reminders_enabled: true,
+            meeting_reminder_delay_minutes: 5,
+            meeting_templates_enabled: false,
+            default_meeting_template: "general".to_owned(),
         }
     }
 

@@ -40,6 +40,7 @@ pub fn meeting() -> Meeting {
         cancelled: false,
         declined: false,
         all_day: false,
+        has_transcript: None,
     }
 }
 

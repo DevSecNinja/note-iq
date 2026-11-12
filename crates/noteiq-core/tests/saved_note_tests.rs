@@ -24,6 +24,7 @@ fn meeting(id: &str, at: DateTime<FixedOffset>) -> Meeting {
         cancelled: false,
         declined: false,
         all_day: false,
+        has_transcript: None,
     }
 }
 

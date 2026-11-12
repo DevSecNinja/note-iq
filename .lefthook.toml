@@ -3,3 +3,6 @@ run = "cargo fmt --all -- --check"
 
 [pre-commit.commands.dprint]
 run = "dprint check --allow-no-files"
+
+[pre-commit.commands.gitleaks]
+run = "gitleaks git --pre-commit --staged --redact --no-banner"

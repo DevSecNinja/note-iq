@@ -112,6 +112,9 @@ pub struct Meeting {
     pub declined: bool,
     #[serde(default)]
     pub all_day: bool,
+    /// Whether Teams recorded a transcript; `None` when WorkIQ did not say.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_transcript: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +136,11 @@ pub struct Capture {
     /// Fixed at the first save, so changing the setting never renames notes already saved.
     pub(crate) filename_template: Option<NoteFilename>,
     pub(crate) restored_document: Option<crate::saved_note::RestoredDocument>,
+    /// The meeting template inserted into the body; the note counts as empty while the body
+    /// still matches it exactly.
+    pub(crate) template_text: Option<String>,
+    /// The meeting occurrence the template was last applied for.
+    pub(crate) template_meeting: Option<(String, Option<DateTime<FixedOffset>>)>,
 }
 
 impl Capture {
@@ -153,6 +161,8 @@ impl Capture {
             filename_meeting_slug: None,
             filename_template: None,
             restored_document: None,
+            template_text: None,
+            template_meeting: None,
         }
     }
 
@@ -180,7 +190,16 @@ impl Capture {
         self.meeting_decision = MeetingDecision::Disconnected;
     }
 
+    /// True when the body is blank or still exactly an inserted meeting template, so a note
+    /// nobody wrote in is never saved.
     pub fn is_empty(&self) -> bool {
-        self.body.trim().is_empty()
+        self.body.trim().is_empty() || self.has_untouched_template()
+    }
+
+    /// Whether the body is a meeting template the user has not changed.
+    pub fn has_untouched_template(&self) -> bool {
+        self.template_text
+            .as_deref()
+            .is_some_and(|template| !template.trim().is_empty() && template == self.body)
     }
 }

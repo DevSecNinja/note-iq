@@ -5,6 +5,8 @@ pub mod diagnostics;
 pub mod launch;
 pub mod markdown;
 pub mod meeting;
+pub mod meeting_reminder;
+pub mod meeting_template;
 pub mod model;
 pub mod note_filename;
 pub mod saved_note;

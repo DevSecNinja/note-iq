@@ -28,14 +28,27 @@ use std::{
     cell::RefCell,
     path::PathBuf,
     rc::Rc,
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, Sender},
+    },
     time::{Duration, Instant},
 };
+
+use crate::reminder::{ReminderJob, ReminderOutcome, spawn_notifier};
+use noteiq_core::{
+    launch::ForwardRequest,
+    meeting_reminder::{ReminderHistory, ReminderTracker, reminder_delay},
+};
+
+mod template_ui;
 
 enum AppEvent {
     Meetings(u64, Result<Vec<Meeting>, WorkiqError>, Instant),
     Author(Option<String>),
     MeetingNote(NoteRequest, Result<Option<Box<Capture>>, SavedNoteError>),
+    Reminder(String, ReminderOutcome),
 }
 
 #[derive(Clone)]
@@ -57,6 +70,13 @@ const MEETING_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 /// How often an open note re-checks the cached meetings against the clock, so a meeting that
 /// starts while the note is open is picked up without another calendar lookup.
 const REEVALUATION_INTERVAL: Duration = Duration::from_secs(60);
+/// How often due meeting reminders are checked against the cached calendar.
+const REMINDER_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+/// How soon to look up meetings again while a reminder waits for a fresh transcript status.
+const REMINDER_LOOKUP_INTERVAL: Duration = Duration::from_secs(2 * 60);
+/// How often reminders refresh the calendar while nothing is due, so meetings added later in
+/// the day, or the next day's meetings, are known.
+const REMINDER_CALENDAR_INTERVAL: Duration = Duration::from_secs(30 * 60);
 const NO_MEETING: &str = "No meeting";
 
 fn no_meeting_row() -> MeetingRow {
@@ -125,6 +145,22 @@ struct AppState {
     pending_note: Option<NoteRequest>,
     note_lookup_error: Option<String>,
     pending_meeting_change: Option<PendingMeetingChange>,
+    reminders: ReminderState,
+}
+
+/// Meeting reminders: meetings seen in lookups and the reminders already shown.
+#[derive(Default)]
+struct ReminderState {
+    tracker: ReminderTracker,
+    history: ReminderHistory,
+    /// Unset in tests, so they never read or write the real reminder history.
+    history_path: Option<PathBuf>,
+    last_check: Option<Instant>,
+    last_lookup: Option<Instant>,
+    /// Shows reminders in the background; unset in tests.
+    notifier: Option<Sender<ReminderJob>>,
+    /// Shared with queued jobs, so turning reminders off stops toasts that have not appeared.
+    enabled: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -156,6 +192,7 @@ impl AppState {
             pending_note: None,
             note_lookup_error: None,
             pending_meeting_change: None,
+            reminders: ReminderState::default(),
         };
         state.capture.capture.author = state.effective_author();
         state
@@ -261,6 +298,20 @@ pub fn run(
         tracing::warn!(failure_class = "uri_registration_failed");
         state.borrow_mut().status = message.to_owned();
     }
+    {
+        let mut state = state.borrow_mut();
+        let path = state.settings_path.with_file_name("meeting-reminders.json");
+        let mut history = ReminderHistory::load(&path);
+        if history.prune(Local::now().fixed_offset()) && history.save(&path).is_err() {
+            tracing::warn!(failure_class = "reminder_history_save_failed");
+        }
+        state.reminders.history = history;
+        state.reminders.history_path = Some(path);
+        let reminder_sender = sender.clone();
+        state.reminders.notifier = Some(spawn_notifier(move |key, outcome| {
+            let _ = reminder_sender.send(AppEvent::Reminder(key, outcome));
+        }));
+    }
 
     start_meeting_lookup(&state, &sender, false);
     configure_view(&window, &state);
@@ -327,7 +378,7 @@ fn bind_callbacks(
     sender: Sender<AppEvent>,
     hotkeys: Option<HotkeyController>,
     tray: Option<TrayController>,
-    ipc: Option<Receiver<CaptureSource>>,
+    ipc: Option<Receiver<ForwardRequest>>,
     events: Receiver<AppEvent>,
 ) -> Timer {
     let hotkeys = Rc::new(RefCell::new(hotkeys));
@@ -463,6 +514,20 @@ fn bind_callbacks(
             }
             start_meeting_lookup_state(&mut state, &sender, false);
             apply_available_meetings_at(&ui, &mut state, Local::now().fixed_offset());
+        });
+    }
+    {
+        let state = state.clone();
+        let ui_weak = ui_weak.clone();
+        window.on_meeting_reminders_changed(move |enabled| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let mut state = state.borrow_mut();
+            state.settings.meeting_reminders_enabled = enabled;
+            state.reminders.enabled.store(enabled, Ordering::Relaxed);
+            persist_settings(&mut state);
+            refresh_view(&ui, &state);
         });
     }
     {
@@ -622,6 +687,7 @@ fn bind_callbacks(
         });
         tray.bind(window.as_weak());
     }
+    template_ui::bind(window, state);
 
     let timer = Timer::default();
     let ui_weak = ui_weak.clone();
@@ -636,6 +702,11 @@ fn bind_callbacks(
         for event in events.try_iter() {
             match event {
                 AppEvent::Meetings(id, result, started) if id == state.lookup_id => {
+                    if let Ok(meetings) = &result {
+                        let looked_up_at = Local::now().fixed_offset()
+                            - chrono::TimeDelta::from_std(started.elapsed()).unwrap_or_default();
+                        state.reminders.tracker.observe(meetings, looked_up_at);
+                    }
                     process_meeting_result(&ui, &mut state, result, started);
                 }
                 AppEvent::Meetings(..) => {}
@@ -649,13 +720,30 @@ fn bind_callbacks(
                         Local::now().fixed_offset(),
                     );
                 }
+                AppEvent::Reminder(key, outcome) => {
+                    apply_reminder_outcome(&mut state, &key, outcome, Local::now().fixed_offset());
+                }
             }
         }
         if let Some(ipc) = ipc.as_ref() {
-            for source in ipc.try_iter() {
-                ensure_capture(&ui, &mut state, &sender_for_timer, source);
+            for request in ipc.try_iter() {
+                match request {
+                    ForwardRequest::Show(source) => {
+                        ensure_capture(&ui, &mut state, &sender_for_timer, source);
+                    }
+                    ForwardRequest::MeetingReminder(key) => {
+                        open_meeting_reminder(&ui, &mut state, &sender_for_timer, &key);
+                    }
+                }
                 present = true;
             }
+        }
+        if state
+            .reminders
+            .last_check
+            .is_none_or(|at| at.elapsed() >= REMINDER_CHECK_INTERVAL)
+        {
+            check_meeting_reminders(&mut state, &sender_for_timer, Local::now().fixed_offset());
         }
         let _keep_tray_alive = &tray;
         if hotkeys
@@ -687,12 +775,147 @@ fn bind_callbacks(
     timer
 }
 
+/// Hands each untranscribed meeting that ended a few minutes ago to the notifier, and keeps the
+/// calendar fresh enough to judge them. The setting is read every time, so turning reminders
+/// off takes effect at once.
+fn check_meeting_reminders(
+    state: &mut AppState,
+    sender: &Sender<AppEvent>,
+    now: DateTime<FixedOffset>,
+) {
+    state.reminders.last_check = Some(Instant::now());
+    state
+        .reminders
+        .enabled
+        .store(state.settings.meeting_reminders_enabled, Ordering::Relaxed);
+    if !state.settings.meeting_reminders_enabled {
+        return;
+    }
+    let delay = reminder_delay(state.settings.meeting_reminder_delay_minutes);
+    let noted = state
+        .capture_open
+        .then(|| state.capture.capture.meeting.clone())
+        .flatten()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let due = state
+        .reminders
+        .tracker
+        .due(now, delay, &state.reminders.history, &noted);
+    for meeting in due {
+        let key = state.reminders.history.begin(&meeting);
+        let job = ReminderJob {
+            meeting,
+            key: key.clone(),
+            notes_root: state.settings.destination_root.clone(),
+            enabled: state.reminders.enabled.clone(),
+        };
+        let sent = state
+            .reminders
+            .notifier
+            .as_ref()
+            .is_some_and(|notifier| notifier.send(job).is_ok());
+        if !sent {
+            tracing::warn!(failure_class = "reminder_notifier_stopped");
+            state.reminders.history.failed(&key);
+        }
+    }
+    let needs_lookup =
+        state
+            .reminders
+            .tracker
+            .needs_lookup(now, delay, &state.reminders.history, &noted);
+    let interval = if needs_lookup {
+        REMINDER_LOOKUP_INTERVAL
+    } else {
+        REMINDER_CALENDAR_INTERVAL
+    };
+    let latest = state.reminders.last_lookup.max(state.last_meeting_refresh);
+    if latest.is_none_or(|at| at.elapsed() >= interval) {
+        state.reminders.last_lookup = Some(Instant::now());
+        start_meeting_lookup_state(state, sender, true);
+    }
+}
+
+/// Saves a reminder as shown once Windows confirms it, so a failed attempt is retried at the
+/// next check instead of being lost.
+fn apply_reminder_outcome(
+    state: &mut AppState,
+    key: &str,
+    outcome: ReminderOutcome,
+    now: DateTime<FixedOffset>,
+) {
+    match outcome {
+        ReminderOutcome::Delivered => {
+            state.reminders.history.delivered(key, now);
+            state.reminders.history.prune(now);
+            if let Some(path) = state.reminders.history_path.as_ref()
+                && state.reminders.history.save(path).is_err()
+            {
+                tracing::warn!(failure_class = "reminder_history_save_failed");
+            }
+        }
+        ReminderOutcome::Failed => state.reminders.history.failed(key),
+        ReminderOutcome::Cancelled => state.reminders.history.cancelled(key),
+    }
+}
+
+/// Opens a note connected to the meeting a reminder was about: its saved note when it has one,
+/// otherwise a new note. A note in progress is saved and closed first unless it is empty.
+fn open_meeting_reminder(
+    window: &MainWindow,
+    state: &mut AppState,
+    sender: &Sender<AppEvent>,
+    key: &str,
+) {
+    let now = Local::now().fixed_offset();
+    let Some(meeting) = state.reminders.history.meeting(key).cloned() else {
+        tracing::warn!(failure_class = "reminder_unknown");
+        ensure_capture(window, state, sender, CaptureSource::Uri);
+        return;
+    };
+    if state.capture_open {
+        let capture = &state.capture.capture;
+        if capture
+            .meeting
+            .as_ref()
+            .is_some_and(|attached| same_occurrence(attached, &meeting))
+        {
+            return;
+        }
+        let in_progress = !capture.is_empty() || capture.path.is_some();
+        if in_progress && !close_capture_state(window, state) {
+            return;
+        }
+    }
+    if !state.capture_open {
+        begin_capture(window, state, sender, CaptureSource::Uri);
+    }
+    if !state
+        .meetings
+        .iter()
+        .any(|known| same_occurrence(known, &meeting))
+    {
+        state.meetings.push(meeting.clone());
+    }
+    update_meeting_view(window, state, now);
+    if let Some(position) = state
+        .picker_meetings
+        .iter()
+        .position(|choice| same_occurrence(choice, &meeting))
+    {
+        let index = i32::try_from(position + 1).unwrap_or(0);
+        request_meeting_note(window, state, index, now, sender);
+    }
+}
+
 fn reset_settings_view(window: &MainWindow, state: &AppState, now: DateTime<FixedOffset>) {
     window.set_hotkey_text(state.settings.hotkey.clone().into());
     window.set_hotkey_error(SharedString::new());
     window.set_note_filename_text(state.note_filename.template().into());
     window.set_note_filename_error(SharedString::new());
     window.set_note_filename_preview(example_text(&state.note_filename, now).into());
+    template_ui::reset_view(window, state);
 }
 
 fn example_text(note_filename: &NoteFilename, now: DateTime<FixedOffset>) -> String {
@@ -1285,6 +1508,7 @@ fn choose_meeting(
 /// Shows "No meeting" and the cached meetings, with the attached meeting selected. An attached
 /// meeting stays listed even when a refresh no longer returns it.
 fn update_meeting_view(window: &MainWindow, state: &mut AppState, now: DateTime<FixedOffset>) {
+    template_ui::sync_meeting_template(window, state, now);
     let mut choices = browse_meetings(&state.meetings, now);
     let selected = match state
         .pending_meeting_change
@@ -1372,6 +1596,7 @@ fn refresh_view(window: &MainWindow, state: &AppState) {
     window.set_meeting_refresh_enabled(!state.lookup_pending);
     window.set_destination_label(state.settings.destination_root.display().to_string().into());
     window.set_auto_connect(state.settings.auto_connect_meeting);
+    window.set_meeting_reminders(state.settings.meeting_reminders_enabled);
     window.set_hotkey_enabled(state.settings.hotkey_enabled);
     window.set_has_note(state.capture.capture.path.is_some());
     window.set_saved(!state.capture.is_dirty());
@@ -1392,7 +1617,7 @@ mod tests {
     }
 
     /// The testing backend can only be installed once per thread.
-    fn init_backend() {
+    pub(super) fn init_backend() {
         BACKEND_READY.with(|ready| {
             if !ready.replace(true) {
                 i_slint_backend_testing::init_no_event_loop();
@@ -1401,7 +1626,7 @@ mod tests {
     }
 
     /// Settings that point at a vault that does not exist, never the real one.
-    fn test_settings() -> Settings {
+    pub(super) fn test_settings() -> Settings {
         Settings::default_for(
             &std::env::temp_dir()
                 .join("noteiq-ui-tests")
@@ -1413,7 +1638,12 @@ mod tests {
         DateTime::parse_from_rfc3339("2026-11-04T14:15:00+01:00").unwrap()
     }
 
-    fn meeting_at(id: &str, now: DateTime<FixedOffset>, start: i64, end: i64) -> Meeting {
+    pub(super) fn meeting_at(
+        id: &str,
+        now: DateTime<FixedOffset>,
+        start: i64,
+        end: i64,
+    ) -> Meeting {
         Meeting {
             id: id.into(),
             title: Some(id.into()),
@@ -1426,6 +1656,7 @@ mod tests {
             cancelled: false,
             declined: false,
             all_day: false,
+            has_transcript: None,
         }
     }
 
@@ -2642,5 +2873,117 @@ mod tests {
         assert_eq!(state.status, "Shortcut set to Ctrl+Alt+N.");
         assert_eq!(window.get_hotkey_text(), "Ctrl+Alt+N");
         assert_eq!(window.get_hotkey_error(), "");
+    }
+
+    /// State with a meeting that ended 20 minutes ago, seen by a lookup that has just run, and
+    /// a notifier whose jobs the test receives.
+    fn reminder_fixture() -> (MainWindow, AppState, Meeting, Receiver<ReminderJob>) {
+        let now = Local::now().fixed_offset();
+        let ended = meeting_at("ended", now, -50, -20);
+        let (window, mut state) = window_with(vec![ended.clone()], now);
+        state
+            .reminders
+            .tracker
+            .observe(std::slice::from_ref(&ended), now);
+        state.reminders.last_lookup = Some(Instant::now());
+        let (notifier, jobs) = mpsc::channel();
+        state.reminders.notifier = Some(notifier);
+        (window, state, ended, jobs)
+    }
+
+    #[test]
+    fn untranscribed_meetings_are_reminded_once_and_only_while_enabled() {
+        let (_window, mut state, ended, jobs) = reminder_fixture();
+        let now = Local::now().fixed_offset();
+        let (sender, _events) = mpsc::channel();
+
+        state.settings.meeting_reminders_enabled = false;
+        check_meeting_reminders(&mut state, &sender, now);
+        assert!(jobs.try_recv().is_err());
+
+        state.settings.meeting_reminders_enabled = true;
+        check_meeting_reminders(&mut state, &sender, now);
+        check_meeting_reminders(&mut state, &sender, now);
+        let job = jobs.try_recv().unwrap();
+        assert!(jobs.try_recv().is_err(), "one job while it is being shown");
+        assert!(state.reminders.history.reminders.is_empty());
+
+        apply_reminder_outcome(&mut state, &job.key, ReminderOutcome::Delivered, now);
+        check_meeting_reminders(&mut state, &sender, now);
+        assert!(jobs.try_recv().is_err());
+        assert_eq!(state.reminders.history.reminders.len(), 1);
+        assert!(state.reminders.history.contains(&ended));
+        assert!(!state.lookup_pending, "the fresh lookup is reused");
+    }
+
+    #[test]
+    fn a_reminder_windows_could_not_show_is_retried_a_few_times() {
+        let (_window, mut state, _ended, jobs) = reminder_fixture();
+        let now = Local::now().fixed_offset();
+        let (sender, _events) = mpsc::channel();
+
+        for _ in 0..noteiq_core::meeting_reminder::MAX_DELIVERY_ATTEMPTS {
+            check_meeting_reminders(&mut state, &sender, now);
+            let job = jobs.try_recv().expect("the reminder is attempted again");
+            apply_reminder_outcome(&mut state, &job.key, ReminderOutcome::Failed, now);
+        }
+        check_meeting_reminders(&mut state, &sender, now);
+        assert!(jobs.try_recv().is_err(), "gives up after the last attempt");
+        assert!(state.reminders.history.reminders.is_empty());
+    }
+
+    #[test]
+    fn turning_reminders_off_cancels_queued_ones_without_using_an_attempt() {
+        let (_window, mut state, ended, jobs) = reminder_fixture();
+        let now = Local::now().fixed_offset();
+        let (sender, _events) = mpsc::channel();
+
+        check_meeting_reminders(&mut state, &sender, now);
+        let job = jobs.try_recv().unwrap();
+        state.settings.meeting_reminders_enabled = false;
+        check_meeting_reminders(&mut state, &sender, now);
+        assert!(
+            !job.enabled.load(Ordering::Relaxed),
+            "the queued job sees it"
+        );
+
+        apply_reminder_outcome(&mut state, &job.key, ReminderOutcome::Cancelled, now);
+        assert!(!state.reminders.history.contains(&ended));
+        state.settings.meeting_reminders_enabled = true;
+        for _ in 0..noteiq_core::meeting_reminder::MAX_DELIVERY_ATTEMPTS {
+            check_meeting_reminders(&mut state, &sender, now);
+            let job = jobs.try_recv().expect("all attempts remain");
+            assert!(job.enabled.load(Ordering::Relaxed));
+            apply_reminder_outcome(&mut state, &job.key, ReminderOutcome::Failed, now);
+        }
+    }
+
+    #[test]
+    fn a_reminder_click_opens_a_new_note_for_its_meeting() {
+        let folder = tempfile::tempdir().unwrap();
+        let now = Local::now().fixed_offset();
+        let ended = meeting_at("ended", now, -50, -20);
+        let settings = Settings {
+            destination_root: folder.path().into(),
+            ..test_settings()
+        };
+        let (window, mut state) = window_with_settings(settings, Vec::new(), now);
+        state.capture.edit("Unrelated draft", Instant::now());
+        let draft_id = state.capture.capture.id;
+        let key = state.reminders.history.record(&ended, now);
+        let (sender, events) = mpsc::channel();
+
+        open_meeting_reminder(&window, &mut state, &sender, &key);
+        let AppEvent::MeetingNote(request, result) =
+            events.recv_timeout(Duration::from_secs(5)).unwrap()
+        else {
+            panic!("expected the saved-note lookup");
+        };
+        apply_meeting_note(&window, &mut state, request, result, now);
+
+        assert_ne!(state.capture.capture.id, draft_id);
+        assert!(state.capture.capture.body.is_empty());
+        assert_eq!(state.capture.capture.source, CaptureSource::Uri);
+        assert_eq!(state.capture.capture.meeting, Some(ended));
     }
 }
