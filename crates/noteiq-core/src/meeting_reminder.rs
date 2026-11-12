@@ -1,4 +1,5 @@
-//! Decides when to suggest writing a note after an untranscribed meeting ends.
+//! Decides when to suggest writing a note after an untranscribed meeting ends. Only meetings
+//! the user was in a call for are suggested.
 
 use crate::{
     markdown::contact_name,
@@ -7,7 +8,11 @@ use crate::{
 };
 use chrono::{DateTime, FixedOffset, SecondsFormat, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs, io, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs, io,
+    path::Path,
+};
 use tempfile::NamedTempFile;
 
 /// Meetings that ended longer ago than this are never suggested, so starting NoteIQ late in
@@ -93,14 +98,44 @@ fn within_window(meeting: &Meeting, now: DateTime<FixedOffset>) -> bool {
         .is_some_and(|end| end <= now && now - end <= REMINDER_WINDOW)
 }
 
-/// Meetings seen in calendar lookups, kept until their reminder window has passed.
+/// Meetings seen in calendar lookups, kept until their reminder window has passed, and which
+/// of them the user was in a call for.
 #[derive(Clone, Debug, Default)]
 pub struct ReminderTracker {
     meetings: Vec<Meeting>,
     last_lookup: Option<DateTime<FixedOffset>>,
+    /// Reminder keys of meetings that were in progress while the user was in a call.
+    joined: HashSet<String>,
+}
+
+fn in_progress(meeting: &Meeting, now: DateTime<FixedOffset>) -> bool {
+    matches!((meeting.start, meeting.end), (Some(start), Some(end)) if start <= now && now < end)
 }
 
 impl ReminderTracker {
+    /// Whether a tracked meeting is in progress, so it is worth checking for a call.
+    pub fn any_in_progress(&self, now: DateTime<FixedOffset>) -> bool {
+        self.meetings
+            .iter()
+            .any(|meeting| in_progress(meeting, now))
+    }
+
+    /// The user is in a call at `now`: every tracked meeting in progress counts as joined.
+    /// Overlapping meetings cannot be told apart, so all of them are marked.
+    pub fn mark_joined(&mut self, now: DateTime<FixedOffset>) {
+        for meeting in self
+            .meetings
+            .iter()
+            .filter(|meeting| in_progress(meeting, now))
+        {
+            self.joined.insert(reminder_key(meeting));
+        }
+    }
+
+    pub fn has_joined(&self, meeting: &Meeting) -> bool {
+        self.joined.contains(&reminder_key(meeting))
+    }
+
     /// Records a successful lookup that started at `looked_up_at`. A newer copy of a meeting
     /// replaces the older one, so a transcript that became available is noticed.
     pub fn observe(&mut self, meetings: &[Meeting], looked_up_at: DateTime<FixedOffset>) {
@@ -119,6 +154,12 @@ impl ReminderTracker {
                 .end
                 .is_some_and(|end| looked_up_at - end <= REMINDER_WINDOW)
         });
+        let tracked = self
+            .meetings
+            .iter()
+            .map(reminder_key)
+            .collect::<HashSet<_>>();
+        self.joined.retain(|key| tracked.contains(key));
         self.last_lookup = self.last_lookup.max(Some(looked_up_at));
     }
 
@@ -134,6 +175,7 @@ impl ReminderTracker {
             (due <= now
                 && within_window(meeting, now)
                 && wants_note(meeting)
+                && self.has_joined(meeting)
                 && !history.blocks(meeting)
                 && !noted.iter().any(|noted| same_occurrence(noted, meeting)))
             .then_some((meeting, due))

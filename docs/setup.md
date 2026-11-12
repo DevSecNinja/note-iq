@@ -566,7 +566,14 @@ in Notification Center until dismissed.
   lookup that starts after the delay, so a transcript that appears shortly
   after the meeting ends still counts.
 - WorkIQ reports `isTranscriptAvailable` for Teams meetings. When it does not
-  say, for example for in-person meetings, NoteIQ still suggests a note.
+  say, NoteIQ still suggests a note.
+- Only meetings you were in a Teams call for on this PC are suggested. While a
+  meeting is in progress, NoteIQ checks every 30 seconds whether Teams is using
+  a microphone; Teams keeps it open for the whole call, even while you are
+  muted. Calls joined in a browser or on another device, and in-person
+  meetings, are not detected. When meetings overlap, all of them count as
+  joined. Reminders wait until you leave the call, for example when a meeting
+  runs over.
 - There is no reminder for cancelled, declined, or all-day meetings; for
   calendar blocks you organized with nobody invited, such as lunch; for the
   meeting connected to the open note; for meetings that already have a saved

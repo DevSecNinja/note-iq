@@ -182,6 +182,8 @@ struct ReminderState {
     notifier: Option<Sender<ReminderJob>>,
     /// Shared with queued jobs, so turning reminders off stops toasts that have not appeared.
     enabled: Arc<AtomicBool>,
+    /// Tells whether the user is in a call right now; unset in tests unless a test sets it.
+    call_probe: Option<fn() -> bool>,
 }
 
 impl AppState {
@@ -332,6 +334,7 @@ pub fn run(
         state.reminders.notifier = Some(spawn_notifier(move |key, outcome| {
             let _ = reminder_sender.send(AppEvent::Reminder(key, outcome));
         }));
+        state.reminders.call_probe = Some(crate::call_presence::teams_call_active);
     }
 
     start_meeting_lookup(&state, &sender, false);
@@ -856,10 +859,26 @@ fn check_meeting_reminders(
         .flatten()
         .into_iter()
         .collect::<Vec<_>>();
-    let due = state
-        .reminders
-        .tracker
-        .due(now, delay, &state.reminders.history, &noted);
+    // Only meetings the user was in a call for are reminded, and never during a call, such as
+    // one that runs over its scheduled end.
+    let probe_needed = state.reminders.tracker.any_in_progress(now)
+        || !state
+            .reminders
+            .tracker
+            .due(now, delay, &state.reminders.history, &noted)
+            .is_empty();
+    let in_call = probe_needed && state.reminders.call_probe.is_some_and(|probe| probe());
+    if in_call {
+        state.reminders.tracker.mark_joined(now);
+    }
+    let due = if in_call {
+        Vec::new()
+    } else {
+        state
+            .reminders
+            .tracker
+            .due(now, delay, &state.reminders.history, &noted)
+    };
     for meeting in due {
         let key = state.reminders.history.begin(&meeting);
         let job = ReminderJob {
@@ -1603,7 +1622,10 @@ fn update_meeting_view(window: &MainWindow, state: &mut AppState, now: DateTime<
             .position(|meeting| same_occurrence(meeting, attached))
         {
             Some(position) => {
-                choices[position] = attached.clone();
+                // Show the attached meeting, with the transcript status from the latest lookup.
+                let mut shown = attached.clone();
+                shown.has_transcript = choices[position].has_transcript.or(shown.has_transcript);
+                choices[position] = shown;
                 position + 1
             }
             None => {
@@ -2712,6 +2734,27 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_meeting_shows_a_transcript_reported_by_a_later_lookup() {
+        let (window, mut state, now) = cached_window();
+        choose_meeting(&window, &mut state, 1, now);
+        let current_row = |window: &MainWindow| window.get_meeting_rows().row_data(1).unwrap();
+        assert!(!current_row(&window).transcribed);
+
+        let mut refreshed = state.meetings[1].clone();
+        refreshed.has_transcript = Some(true);
+        state.lookup_pending = true;
+        process_meeting_result(&window, &mut state, Ok(vec![refreshed]), Instant::now());
+        let row = current_row(&window);
+        assert!(row.transcribed);
+        assert!(row.label.ends_with(" · Transcribed"));
+        assert_eq!(window.get_meeting_index(), 1);
+        assert_eq!(
+            state.capture.capture.meeting_decision,
+            MeetingDecision::Selected
+        );
+    }
+
+    #[test]
     fn an_empty_note_snaps_to_a_meeting_once_it_starts() {
         let now = Local::now().fixed_offset();
         let (window, mut state) = window_with(vec![meeting_at("standup", now, 5, 35)], now);
@@ -2971,10 +3014,51 @@ mod tests {
             .reminders
             .tracker
             .observe(std::slice::from_ref(&ended), now);
+        state
+            .reminders
+            .tracker
+            .mark_joined(ended.start.unwrap() + TimeDelta::minutes(1));
         state.reminders.last_lookup = Some(Instant::now());
         let (notifier, jobs) = mpsc::channel();
         state.reminders.notifier = Some(notifier);
         (window, state, ended, jobs)
+    }
+
+    #[test]
+    fn only_joined_meetings_are_reminded_and_never_during_a_call() {
+        let now = Local::now().fixed_offset();
+        let skipped = meeting_at("skipped", now, -50, -20);
+        let current = meeting_at("current", now, -10, 20);
+        let (_window, mut state) = window_with(vec![skipped.clone(), current.clone()], now);
+        // No note is open, so the current meeting does not count as noted.
+        state.capture_open = false;
+        state
+            .reminders
+            .tracker
+            .observe(&[skipped, current.clone()], now);
+        state.reminders.last_lookup = Some(Instant::now());
+        let (notifier, jobs) = mpsc::channel();
+        state.reminders.notifier = Some(notifier);
+        let (sender, _events) = mpsc::channel();
+
+        check_meeting_reminders(&mut state, &sender, now);
+        assert!(
+            jobs.try_recv().is_err(),
+            "the user never joined the earlier meeting"
+        );
+
+        state.reminders.call_probe = Some(|| true);
+        check_meeting_reminders(&mut state, &sender, now);
+        assert!(state.reminders.tracker.has_joined(&current));
+
+        let after = now + TimeDelta::minutes(30);
+        state.reminders.tracker.observe(&[], after);
+        check_meeting_reminders(&mut state, &sender, after);
+        assert!(jobs.try_recv().is_err(), "deferred while still in a call");
+
+        state.reminders.call_probe = Some(|| false);
+        check_meeting_reminders(&mut state, &sender, after);
+        assert_eq!(jobs.try_recv().unwrap().meeting.id, "current");
     }
 
     #[test]

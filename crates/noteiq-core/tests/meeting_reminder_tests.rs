@@ -21,10 +21,12 @@ fn after_end(minutes: i64) -> DateTime<FixedOffset> {
     end() + TimeDelta::minutes(minutes)
 }
 
-/// A tracker whose latest lookup started `minutes` after the meeting ended.
+/// A tracker whose latest lookup started `minutes` after the meeting ended, with the user in a
+/// call while the meetings were in progress.
 fn looked_up(meetings: &[Meeting], minutes: i64) -> ReminderTracker {
     let mut tracker = ReminderTracker::default();
     tracker.observe(meetings, after_end(minutes));
+    tracker.mark_joined(end() - TimeDelta::minutes(10));
     tracker
 }
 
@@ -56,6 +58,33 @@ fn reminds_after_the_delay_unless_the_meeting_was_transcribed() {
 
     assert!(due_ids(&tracker, after_end(4)).is_empty(), "too early");
     assert_eq!(due_ids(&tracker, after_end(6)), ["event-42", "unknown"]);
+}
+
+#[test]
+fn only_meetings_the_user_was_in_a_call_for_are_reminded() {
+    let mut tracker = ReminderTracker::default();
+    let earlier = Meeting {
+        id: "earlier".into(),
+        start: Some(end() - TimeDelta::hours(2)),
+        end: Some(end() - TimeDelta::minutes(90)),
+        ..meeting()
+    };
+    tracker.observe(
+        &[meeting(), earlier.clone()],
+        end() - TimeDelta::minutes(20),
+    );
+    assert!(tracker.any_in_progress(end() - TimeDelta::minutes(10)));
+    assert!(!tracker.any_in_progress(after_end(1)));
+
+    tracker.mark_joined(end() - TimeDelta::minutes(10));
+    tracker.observe(&[], after_end(6));
+    assert!(tracker.has_joined(&meeting()));
+    assert!(!tracker.has_joined(&earlier));
+    assert_eq!(due_ids(&tracker, after_end(6)), ["event-42"]);
+    assert!(
+        !tracker.needs_lookup(after_end(6), DELAY, &ReminderHistory::default(), &[]),
+        "a meeting the user skipped needs no lookup either"
+    );
 }
 
 #[test]
