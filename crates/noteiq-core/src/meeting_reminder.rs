@@ -8,11 +8,7 @@ use crate::{
 };
 use chrono::{DateTime, FixedOffset, SecondsFormat, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, HashSet},
-    fs, io,
-    path::Path,
-};
+use std::{collections::HashMap, fs, io, path::Path};
 use tempfile::NamedTempFile;
 
 /// Meetings that ended longer ago than this are never suggested, so starting NoteIQ late in
@@ -92,50 +88,29 @@ pub fn due_at(meeting: &Meeting, delay: TimeDelta) -> Option<DateTime<FixedOffse
     meeting.end.map(|end| end + delay)
 }
 
-fn within_window(meeting: &Meeting, now: DateTime<FixedOffset>) -> bool {
-    meeting
-        .end
-        .is_some_and(|end| end <= now && now - end <= REMINDER_WINDOW)
+/// The reminder window starts when the meeting ends, or when the call still going on at its
+/// end does, so a meeting that ran over or led into another call is not forgotten.
+fn within_window(meeting: &Meeting, now: DateTime<FixedOffset>, history: &ReminderHistory) -> bool {
+    meeting.end.is_some_and(|end| {
+        let ended = history
+            .call_end_at(end)
+            .map_or(end, |call_end| call_end.max(end));
+        end <= now && now - ended <= REMINDER_WINDOW
+    })
 }
 
-/// Meetings seen in calendar lookups, kept until their reminder window has passed, and which
-/// of them the user was in a call for.
+/// Meetings stay tracked this long after they end, longer than [`REMINDER_WINDOW`] so a
+/// reminder delayed by a long call still finds its meeting.
+const TRACKING_WINDOW: TimeDelta = TimeDelta::hours(12);
+
+/// Meetings seen in calendar lookups, kept until their reminder window has passed.
 #[derive(Clone, Debug, Default)]
 pub struct ReminderTracker {
     meetings: Vec<Meeting>,
     last_lookup: Option<DateTime<FixedOffset>>,
-    /// Reminder keys of meetings that were in progress while the user was in a call.
-    joined: HashSet<String>,
-}
-
-fn in_progress(meeting: &Meeting, now: DateTime<FixedOffset>) -> bool {
-    matches!((meeting.start, meeting.end), (Some(start), Some(end)) if start <= now && now < end)
 }
 
 impl ReminderTracker {
-    /// Whether a tracked meeting is in progress, so it is worth checking for a call.
-    pub fn any_in_progress(&self, now: DateTime<FixedOffset>) -> bool {
-        self.meetings
-            .iter()
-            .any(|meeting| in_progress(meeting, now))
-    }
-
-    /// The user is in a call at `now`: every tracked meeting in progress counts as joined.
-    /// Overlapping meetings cannot be told apart, so all of them are marked.
-    pub fn mark_joined(&mut self, now: DateTime<FixedOffset>) {
-        for meeting in self
-            .meetings
-            .iter()
-            .filter(|meeting| in_progress(meeting, now))
-        {
-            self.joined.insert(reminder_key(meeting));
-        }
-    }
-
-    pub fn has_joined(&self, meeting: &Meeting) -> bool {
-        self.joined.contains(&reminder_key(meeting))
-    }
-
     /// Records a successful lookup that started at `looked_up_at`. A newer copy of a meeting
     /// replaces the older one, so a transcript that became available is noticed.
     pub fn observe(&mut self, meetings: &[Meeting], looked_up_at: DateTime<FixedOffset>) {
@@ -152,14 +127,8 @@ impl ReminderTracker {
         self.meetings.retain(|meeting| {
             meeting
                 .end
-                .is_some_and(|end| looked_up_at - end <= REMINDER_WINDOW)
+                .is_some_and(|end| looked_up_at - end <= TRACKING_WINDOW)
         });
-        let tracked = self
-            .meetings
-            .iter()
-            .map(reminder_key)
-            .collect::<HashSet<_>>();
-        self.joined.retain(|key| tracked.contains(key));
         self.last_lookup = self.last_lookup.max(Some(looked_up_at));
     }
 
@@ -173,9 +142,9 @@ impl ReminderTracker {
         self.meetings.iter().filter_map(move |meeting| {
             let due = due_at(meeting, delay)?;
             (due <= now
-                && within_window(meeting, now)
+                && within_window(meeting, now, history)
                 && wants_note(meeting)
-                && self.has_joined(meeting)
+                && history.attended(meeting)
                 && !history.blocks(meeting)
                 && !noted.iter().any(|noted| same_occurrence(noted, meeting)))
             .then_some((meeting, due))
@@ -229,11 +198,28 @@ struct Delivery {
     in_flight: bool,
 }
 
-/// Reminders already shown, stored next to the settings file, and the ones being delivered.
+/// A stretch of time the user was in a call, from the first to the last check that saw it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CallSpan {
+    pub start: DateTime<FixedOffset>,
+    pub end: DateTime<FixedOffset>,
+}
+
+/// Checks closer together than this belong to the same call. Checks run every 30 seconds.
+const CALL_GAP: TimeDelta = TimeDelta::minutes(2);
+/// Calls are remembered this long, enough to match them to meetings looked up later.
+const CALL_RETENTION: TimeDelta = TimeDelta::hours(24);
+
+/// Reminders already shown and the calls the user was in, stored next to the settings file,
+/// and the reminders being delivered.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ReminderHistory {
     #[serde(default)]
     pub reminders: Vec<SentReminder>,
+    /// Kept apart from meetings, so a call is matched to meetings whenever their details
+    /// arrive, even after NoteIQ restarts.
+    #[serde(default)]
+    pub calls: Vec<CallSpan>,
     /// Only shown reminders are saved: one that never appeared is tried again after a restart.
     #[serde(skip)]
     deliveries: HashMap<String, Delivery>,
@@ -349,12 +335,49 @@ impl ReminderHistory {
             .or_else(|| self.deliveries.get(key).map(|delivery| &delivery.meeting))
     }
 
-    /// Forgets reminders older than [`HISTORY_RETENTION`]. Returns whether any were removed.
+    /// Forgets reminders older than [`HISTORY_RETENTION`] and calls older than a day. Returns
+    /// whether anything was removed.
     pub fn prune(&mut self, now: DateTime<FixedOffset>) -> bool {
-        let before = self.reminders.len();
+        let before = (self.reminders.len(), self.calls.len());
         self.reminders
             .retain(|sent| now - sent.sent_at <= HISTORY_RETENTION);
-        self.reminders.len() != before
+        self.calls.retain(|call| now - call.end <= CALL_RETENTION);
+        (self.reminders.len(), self.calls.len()) != before
+    }
+
+    /// Records that the user is in a call at `now`, extending the latest call when the
+    /// previous check also saw one. Returns whether a new call started, which is worth saving.
+    pub fn record_call(&mut self, now: DateTime<FixedOffset>) -> bool {
+        if let Some(last) = self.calls.last_mut()
+            && now >= last.end
+            && now - last.end <= CALL_GAP
+        {
+            last.end = now;
+            return false;
+        }
+        self.calls.push(CallSpan {
+            start: now,
+            end: now,
+        });
+        true
+    }
+
+    /// Whether the user was in a call at some point while the meeting was scheduled.
+    pub fn attended(&self, meeting: &Meeting) -> bool {
+        let (Some(start), Some(end)) = (meeting.start, meeting.end) else {
+            return false;
+        };
+        self.calls
+            .iter()
+            .any(|call| call.start < end && call.end >= start)
+    }
+
+    /// When the call going on at `instant` ended, as far as the checks have seen.
+    fn call_end_at(&self, instant: DateTime<FixedOffset>) -> Option<DateTime<FixedOffset>> {
+        self.calls
+            .iter()
+            .find(|call| call.start <= instant && instant <= call.end)
+            .map(|call| call.end)
     }
 }
 

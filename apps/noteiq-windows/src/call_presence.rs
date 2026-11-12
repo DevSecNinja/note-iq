@@ -30,47 +30,76 @@ use windows::{
 /// Process names of new Teams and classic Teams.
 const TEAMS_PROCESSES: [&str; 2] = ["ms-teams.exe", "teams.exe"];
 
-/// Whether Teams is using a microphone right now. Errors count as "not in a call", so a
-/// missing or unusual audio setup only means fewer reminders.
-pub fn teams_call_active() -> bool {
+/// Whether Teams is using a microphone right now: `Some(true)` in a call, `Some(false)` when
+/// every microphone was checked without finding one, and `None` when the check failed, which
+/// callers treat as "maybe in a call".
+pub fn teams_call_active() -> Option<bool> {
     // SAFETY: COM is initialized on this thread for the duration of the check and balanced
     // by `CoUninitialize`; the interfaces are released before that.
     unsafe {
         let initialized = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
-        let active = active_capture_processes()
-            .unwrap_or_default()
-            .iter()
-            .any(|path| is_teams_process(path));
+        let (paths, complete) = active_capture_processes();
         if initialized {
             CoUninitialize();
         }
-        active
+        if paths.iter().any(|path| is_teams_process(path)) {
+            Some(true)
+        } else {
+            complete.then_some(false)
+        }
     }
 }
 
-unsafe fn active_capture_processes() -> windows::core::Result<Vec<String>> {
+/// Processes with an active capture session, and whether every device and session could be
+/// checked. One failing device does not hide a session found on another.
+unsafe fn active_capture_processes() -> (Vec<String>, bool) {
     let mut paths = Vec::new();
+    let mut complete = true;
     // SAFETY: plain COM calls on interfaces this function owns.
     unsafe {
-        let enumerator: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
-        let devices = enumerator.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)?;
-        for device in 0..devices.GetCount()? {
-            let manager: IAudioSessionManager2 =
-                devices.Item(device)?.Activate(CLSCTX_ALL, None)?;
-            let sessions = manager.GetSessionEnumerator()?;
-            for session in 0..sessions.GetCount()? {
-                let control: IAudioSessionControl2 = sessions.GetSession(session)?.cast()?;
-                if control.GetState()? != AudioSessionStateActive {
-                    continue;
-                }
-                if let Some(path) = process_path(control.GetProcessId()?) {
-                    paths.push(path);
+        let devices =
+            CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                .and_then(|enumerator| {
+                    enumerator.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)
+                });
+        let Ok(devices) = devices else {
+            return (paths, false);
+        };
+        let Ok(count) = devices.GetCount() else {
+            return (paths, false);
+        };
+        for device in 0..count {
+            let sessions = devices
+                .Item(device)
+                .and_then(|device| device.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None))
+                .and_then(|manager| manager.GetSessionEnumerator());
+            let Ok(sessions) = sessions else {
+                complete = false;
+                continue;
+            };
+            let Ok(count) = sessions.GetCount() else {
+                complete = false;
+                continue;
+            };
+            for session in 0..count {
+                let active = sessions
+                    .GetSession(session)
+                    .and_then(|session| session.cast::<IAudioSessionControl2>())
+                    .and_then(|control| {
+                        Ok((control.GetState()? == AudioSessionStateActive)
+                            .then_some(control.GetProcessId()?))
+                    });
+                match active {
+                    // A process NoteIQ may not open, such as an elevated one, is not Teams,
+                    // which runs as the user.
+                    Ok(Some(pid)) => paths.extend(process_path(pid)),
+                    Ok(None) => {}
+                    Err(_) => complete = false,
                 }
             }
         }
     }
-    Ok(paths)
+    (paths, complete)
 }
 
 fn process_path(pid: u32) -> Option<String> {
@@ -128,6 +157,6 @@ mod tests {
     #[test]
     #[ignore = "depends on a live Teams call"]
     fn smoke_reports_a_teams_call() {
-        println!("Teams call active: {}", teams_call_active());
+        println!("Teams call active: {:?}", teams_call_active());
     }
 }

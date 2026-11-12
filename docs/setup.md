@@ -570,10 +570,13 @@ in Notification Center until dismissed.
 - Only meetings you were in a Teams call for on this PC are suggested. While a
   meeting is in progress, NoteIQ checks every 30 seconds whether Teams is using
   a microphone; Teams keeps it open for the whole call, even while you are
-  muted. Calls joined in a browser or on another device, and in-person
-  meetings, are not detected. When meetings overlap, all of them count as
-  joined. Reminders wait until you leave the call, for example when a meeting
-  runs over.
+  muted or joined with **Don't use audio**, as in a meeting room. Calls joined
+  in a browser or on another device, and in-person meetings, are not detected.
+  When meetings overlap, all of them count as joined. Reminders wait until you
+  leave the call, for example when a meeting runs over, and while NoteIQ cannot
+  tell whether you are in one. The two-hour limit then counts from the end of
+  the call. Calls are kept for a day in `meeting-reminders.json`, so a restart
+  does not lose them.
 - There is no reminder for cancelled, declined, or all-day meetings; for
   calendar blocks you organized with nobody invited, such as lunch; for the
   meeting connected to the open note; for meetings that already have a saved

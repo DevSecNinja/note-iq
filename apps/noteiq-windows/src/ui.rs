@@ -182,8 +182,11 @@ struct ReminderState {
     notifier: Option<Sender<ReminderJob>>,
     /// Shared with queued jobs, so turning reminders off stops toasts that have not appeared.
     enabled: Arc<AtomicBool>,
-    /// Tells whether the user is in a call right now; unset in tests unless a test sets it.
-    call_probe: Option<fn() -> bool>,
+    /// Tells whether the user is in a call right now (`None` when unknown); unset in tests
+    /// unless a test sets it.
+    call_probe: Option<fn() -> Option<bool>>,
+    /// Whether the latest conclusive check saw a call, so the call's end is saved.
+    in_call: bool,
 }
 
 impl AppState {
@@ -859,19 +862,21 @@ fn check_meeting_reminders(
         .flatten()
         .into_iter()
         .collect::<Vec<_>>();
-    // Only meetings the user was in a call for are reminded, and never during a call, such as
-    // one that runs over its scheduled end.
-    let probe_needed = state.reminders.tracker.any_in_progress(now)
-        || !state
-            .reminders
-            .tracker
-            .due(now, delay, &state.reminders.history, &noted)
-            .is_empty();
-    let in_call = probe_needed && state.reminders.call_probe.is_some_and(|probe| probe());
-    if in_call {
-        state.reminders.tracker.mark_joined(now);
+    // Only meetings the user was in a call for are reminded, and never during a call or while
+    // that is unknown, such as a meeting that runs over its scheduled end.
+    let call = state.reminders.call_probe.map(|probe| probe());
+    let defer = call.is_some_and(|in_call| in_call != Some(false));
+    let in_call = call.flatten() == Some(true);
+    let call_started = in_call && state.reminders.history.record_call(now);
+    let call_ended = state.reminders.in_call && call == Some(Some(false));
+    if call.flatten().is_some() {
+        state.reminders.in_call = in_call;
     }
-    let due = if in_call {
+    if call_started || call_ended {
+        state.reminders.history.prune(now);
+        save_reminder_history(state);
+    }
+    let due = if defer {
         Vec::new()
     } else {
         state
@@ -950,14 +955,18 @@ fn apply_reminder_outcome(
         ReminderOutcome::Delivered => {
             state.reminders.history.delivered(key, now);
             state.reminders.history.prune(now);
-            if let Some(path) = state.reminders.history_path.as_ref()
-                && state.reminders.history.save(path).is_err()
-            {
-                tracing::warn!(failure_class = "reminder_history_save_failed");
-            }
+            save_reminder_history(state);
         }
         ReminderOutcome::Failed => state.reminders.history.failed(key),
         ReminderOutcome::Cancelled => state.reminders.history.cancelled(key),
+    }
+}
+
+fn save_reminder_history(state: &AppState) {
+    if let Some(path) = state.reminders.history_path.as_ref()
+        && state.reminders.history.save(path).is_err()
+    {
+        tracing::warn!(failure_class = "reminder_history_save_failed");
     }
 }
 
@@ -3016,8 +3025,8 @@ mod tests {
             .observe(std::slice::from_ref(&ended), now);
         state
             .reminders
-            .tracker
-            .mark_joined(ended.start.unwrap() + TimeDelta::minutes(1));
+            .history
+            .record_call(ended.start.unwrap() + TimeDelta::minutes(1));
         state.reminders.last_lookup = Some(Instant::now());
         let (notifier, jobs) = mpsc::channel();
         state.reminders.notifier = Some(notifier);
@@ -3041,22 +3050,30 @@ mod tests {
         state.reminders.notifier = Some(notifier);
         let (sender, _events) = mpsc::channel();
 
+        state.reminders.call_probe = Some(|| Some(false));
         check_meeting_reminders(&mut state, &sender, now);
         assert!(
             jobs.try_recv().is_err(),
             "the user never joined the earlier meeting"
         );
 
-        state.reminders.call_probe = Some(|| true);
+        state.reminders.call_probe = Some(|| Some(true));
         check_meeting_reminders(&mut state, &sender, now);
-        assert!(state.reminders.tracker.has_joined(&current));
+        assert!(state.reminders.history.attended(&current));
 
+        // The call runs past the meeting's end: no reminder while it lasts or is unknown.
         let after = now + TimeDelta::minutes(30);
         state.reminders.tracker.observe(&[], after);
         check_meeting_reminders(&mut state, &sender, after);
         assert!(jobs.try_recv().is_err(), "deferred while still in a call");
+        state.reminders.call_probe = Some(|| None);
+        check_meeting_reminders(&mut state, &sender, after);
+        assert!(
+            jobs.try_recv().is_err(),
+            "deferred while the call state is unknown"
+        );
 
-        state.reminders.call_probe = Some(|| false);
+        state.reminders.call_probe = Some(|| Some(false));
         check_meeting_reminders(&mut state, &sender, after);
         assert_eq!(jobs.try_recv().unwrap().meeting.id, "current");
     }

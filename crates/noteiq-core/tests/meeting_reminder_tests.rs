@@ -21,21 +21,26 @@ fn after_end(minutes: i64) -> DateTime<FixedOffset> {
     end() + TimeDelta::minutes(minutes)
 }
 
-/// A tracker whose latest lookup started `minutes` after the meeting ended, with the user in a
-/// call while the meetings were in progress.
+/// A tracker whose latest lookup started `minutes` after the meeting ended.
 fn looked_up(meetings: &[Meeting], minutes: i64) -> ReminderTracker {
     let mut tracker = ReminderTracker::default();
     tracker.observe(meetings, after_end(minutes));
-    tracker.mark_joined(end() - TimeDelta::minutes(10));
     tracker
 }
 
+/// A history in which the user was in a call during `meeting()`.
+fn joined() -> ReminderHistory {
+    let mut history = ReminderHistory::default();
+    history.record_call(end() - TimeDelta::minutes(10));
+    history
+}
+
+fn ids(meetings: Vec<Meeting>) -> Vec<String> {
+    meetings.into_iter().map(|meeting| meeting.id).collect()
+}
+
 fn due_ids(tracker: &ReminderTracker, now: DateTime<FixedOffset>) -> Vec<String> {
-    tracker
-        .due(now, DELAY, &ReminderHistory::default(), &[])
-        .into_iter()
-        .map(|meeting| meeting.id)
-        .collect()
+    ids(tracker.due(now, DELAY, &joined(), &[]))
 }
 
 #[test]
@@ -62,28 +67,57 @@ fn reminds_after_the_delay_unless_the_meeting_was_transcribed() {
 
 #[test]
 fn only_meetings_the_user_was_in_a_call_for_are_reminded() {
-    let mut tracker = ReminderTracker::default();
     let earlier = Meeting {
         id: "earlier".into(),
         start: Some(end() - TimeDelta::hours(2)),
         end: Some(end() - TimeDelta::minutes(90)),
         ..meeting()
     };
-    tracker.observe(
-        &[meeting(), earlier.clone()],
-        end() - TimeDelta::minutes(20),
-    );
-    assert!(tracker.any_in_progress(end() - TimeDelta::minutes(10)));
-    assert!(!tracker.any_in_progress(after_end(1)));
-
-    tracker.mark_joined(end() - TimeDelta::minutes(10));
-    tracker.observe(&[], after_end(6));
-    assert!(tracker.has_joined(&meeting()));
-    assert!(!tracker.has_joined(&earlier));
-    assert_eq!(due_ids(&tracker, after_end(6)), ["event-42"]);
+    // The call is seen before any calendar details, as when NoteIQ starts late in a meeting.
+    let mut history = ReminderHistory::default();
+    assert!(history.record_call(end() - TimeDelta::minutes(1)));
     assert!(
-        !tracker.needs_lookup(after_end(6), DELAY, &ReminderHistory::default(), &[]),
+        !history.record_call(end() - TimeDelta::seconds(30)),
+        "the same call"
+    );
+    let tracker = looked_up(&[meeting(), earlier.clone()], 6);
+    assert!(history.attended(&meeting()));
+    assert!(!history.attended(&earlier));
+    assert_eq!(
+        ids(tracker.due(after_end(6), DELAY, &history, &[])),
+        ["event-42"]
+    );
+    assert!(
+        !tracker.needs_lookup(after_end(6), DELAY, &history, &[]),
         "a meeting the user skipped needs no lookup either"
+    );
+
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("meeting-reminders.json");
+    history.save(&path).unwrap();
+    assert!(
+        ReminderHistory::load(&path).attended(&meeting()),
+        "calls survive a restart"
+    );
+}
+
+#[test]
+fn a_call_that_runs_on_starts_the_reminder_window_when_it_ends() {
+    let mut history = ReminderHistory::default();
+    let mut at = end() - TimeDelta::minutes(5);
+    while at <= after_end(3 * 60) {
+        history.record_call(at);
+        at += TimeDelta::seconds(30);
+    }
+    let tracker = looked_up(&[meeting()], 3 * 60);
+    assert_eq!(
+        ids(tracker.due(after_end(3 * 60 + 1), DELAY, &history, &[])),
+        ["event-42"]
+    );
+    assert!(
+        tracker
+            .due(after_end(6 * 60), DELAY, &history, &[])
+            .is_empty()
     );
 }
 
@@ -136,13 +170,9 @@ fn skips_meetings_already_noted_or_reminded() {
     let tracker = looked_up(&[meeting()], 6);
     let now = after_end(6);
 
-    assert!(
-        tracker
-            .due(now, DELAY, &ReminderHistory::default(), &[meeting()])
-            .is_empty()
-    );
+    assert!(tracker.due(now, DELAY, &joined(), &[meeting()]).is_empty());
 
-    let mut history = ReminderHistory::default();
+    let mut history = joined();
     history.record(&meeting(), now);
     assert!(tracker.due(now, DELAY, &history, &[]).is_empty());
     assert!(!tracker.needs_lookup(now, DELAY, &history, &[]));
@@ -151,7 +181,7 @@ fn skips_meetings_already_noted_or_reminded() {
 #[test]
 fn waits_for_a_lookup_after_the_delay_before_judging_the_transcript() {
     let mut tracker = looked_up(&[meeting()], -10);
-    let history = ReminderHistory::default();
+    let history = joined();
 
     assert!(!tracker.needs_lookup(after_end(4), DELAY, &history, &[]));
     assert!(tracker.needs_lookup(after_end(6), DELAY, &history, &[]));
@@ -177,7 +207,7 @@ fn a_meeting_missing_from_a_later_lookup_is_judged_on_what_was_last_seen() {
 fn never_reminds_about_meetings_that_ended_hours_ago() {
     let tracker = looked_up(&[meeting()], 3 * 60);
     assert!(due_ids(&tracker, after_end(3 * 60)).is_empty());
-    assert!(!tracker.needs_lookup(after_end(3 * 60), DELAY, &ReminderHistory::default(), &[]));
+    assert!(!tracker.needs_lookup(after_end(3 * 60), DELAY, &joined(), &[]));
 
     let tracker = looked_up(&[meeting()], 6);
     assert!(due_ids(&tracker, after_end(3 * 60)).is_empty());
@@ -248,9 +278,10 @@ fn entries_saved_with_an_older_key_still_suppress_their_meeting() {
     }]});
     std::fs::write(&path, legacy.to_string()).unwrap();
 
-    let history = ReminderHistory::load(&path);
+    let mut history = ReminderHistory::load(&path);
     assert!(history.contains(&meeting()));
     assert_eq!(history.meeting("ffffffffffffffff"), Some(&meeting()));
+    history.record_call(end() - TimeDelta::minutes(10));
     let tracker = looked_up(&[meeting()], 6);
     assert!(tracker.due(after_end(6), DELAY, &history, &[]).is_empty());
 }
@@ -259,7 +290,7 @@ fn entries_saved_with_an_older_key_still_suppress_their_meeting() {
 fn a_reminder_counts_as_shown_only_once_delivered_and_failures_are_retried_a_few_times() {
     let tracker = looked_up(&[meeting()], 6);
     let now = after_end(6);
-    let mut history = ReminderHistory::default();
+    let mut history = joined();
 
     let key = history.begin(&meeting());
     assert!(
