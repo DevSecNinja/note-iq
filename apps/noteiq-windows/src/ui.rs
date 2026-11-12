@@ -77,9 +77,22 @@ const REMINDER_LOOKUP_INTERVAL: Duration = Duration::from_secs(2 * 60);
 /// How often reminders refresh the calendar while nothing is due, so meetings added later in
 /// the day, or the next day's meetings, are known.
 const REMINDER_CALENDAR_INTERVAL: Duration = Duration::from_secs(30 * 60);
-/// How often meetings are looked up while one is in progress and the capture window is open,
-/// so a transcript that starts during the call shows up in the meeting list.
-const IN_CALL_LOOKUP_INTERVAL: Duration = Duration::from_secs(5 * 60);
+/// The "Check meetings during calls" choices, in minutes; 0 is Off.
+const IN_CALL_REFRESH_CHOICES: [u32; 5] = [5, 10, 15, 30, 0];
+
+/// The choice shown for a saved interval. A hand-edited value snaps to the next longer choice,
+/// so it never checks more often than the user asked.
+fn in_call_refresh_index(minutes: u32) -> i32 {
+    let index = if minutes == 0 {
+        IN_CALL_REFRESH_CHOICES.len() - 1
+    } else {
+        IN_CALL_REFRESH_CHOICES
+            .iter()
+            .position(|&choice| choice >= minutes)
+            .unwrap_or(IN_CALL_REFRESH_CHOICES.len() - 2)
+    };
+    i32::try_from(index).unwrap_or_default()
+}
 const NO_MEETING: &str = "No meeting";
 
 fn no_meeting_row() -> MeetingRow {
@@ -541,6 +554,38 @@ fn bind_callbacks(
     {
         let state = state.clone();
         let ui_weak = ui_weak.clone();
+        window.on_in_call_reminders_changed(move |enabled| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let mut state = state.borrow_mut();
+            state.settings.in_call_reminders_enabled = enabled;
+            persist_settings(&mut state);
+            refresh_view(&ui, &state);
+        });
+    }
+    {
+        let state = state.clone();
+        let ui_weak = ui_weak.clone();
+        window.on_in_call_refresh_changed(move |index| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let Some(&minutes) = usize::try_from(index)
+                .ok()
+                .and_then(|index| IN_CALL_REFRESH_CHOICES.get(index))
+            else {
+                return;
+            };
+            let mut state = state.borrow_mut();
+            state.settings.in_call_refresh_minutes = minutes;
+            persist_settings(&mut state);
+            refresh_view(&ui, &state);
+        });
+    }
+    {
+        let state = state.clone();
+        let ui_weak = ui_weak.clone();
         window.on_settings_requested(move |visible| {
             let Some(ui) = ui_weak.upgrade() else {
                 return;
@@ -865,11 +910,13 @@ fn refresh_meetings_during_call(
 }
 
 fn in_call_lookup_due(state: &AppState, now: DateTime<FixedOffset>) -> bool {
-    if !state.capture_open || meetings_in_progress(&state.meetings, now) == 0 {
+    let minutes = state.settings.in_call_refresh_minutes;
+    if minutes == 0 || !state.capture_open || meetings_in_progress(&state.meetings, now) == 0 {
         return false;
     }
+    let interval = Duration::from_secs(u64::from(minutes) * 60);
     let latest = state.reminders.last_lookup.max(state.last_meeting_refresh);
-    latest.is_none_or(|at| at.elapsed() >= IN_CALL_LOOKUP_INTERVAL)
+    latest.is_none_or(|at| at.elapsed() >= interval)
 }
 
 /// Saves a reminder as shown once Windows confirms it, so a failed attempt is retried at the
@@ -1632,6 +1679,10 @@ fn refresh_view(window: &MainWindow, state: &AppState) {
     window.set_destination_label(state.settings.destination_root.display().to_string().into());
     window.set_auto_connect(state.settings.auto_connect_meeting);
     window.set_meeting_reminders(state.settings.meeting_reminders_enabled);
+    window.set_in_call_reminders(state.settings.in_call_reminders_enabled);
+    window.set_in_call_refresh_index(in_call_refresh_index(
+        state.settings.in_call_refresh_minutes,
+    ));
     window.set_hotkey_enabled(state.settings.hotkey_enabled);
     window.set_has_note(state.capture.capture.path.is_some());
     window.set_saved(!state.capture.is_dirty());
@@ -2973,9 +3024,17 @@ mod tests {
         let (_window, mut state) = window_with(vec![meeting_at("current", now, -10, 20)], now);
         assert!(!in_call_lookup_due(&state, now), "a fresh list is reused");
 
-        let stale = Instant::now().checked_sub(IN_CALL_LOOKUP_INTERVAL).unwrap();
+        let minutes = state.settings.in_call_refresh_minutes;
+        let stale = Instant::now()
+            .checked_sub(Duration::from_secs(u64::from(minutes) * 60))
+            .unwrap();
         state.last_meeting_refresh = Some(stale);
         assert!(in_call_lookup_due(&state, now));
+        state.settings.in_call_refresh_minutes = minutes + 5;
+        assert!(!in_call_lookup_due(&state, now), "a longer interval waits");
+        state.settings.in_call_refresh_minutes = 0;
+        assert!(!in_call_lookup_due(&state, now), "Off never checks");
+        state.settings.in_call_refresh_minutes = minutes;
         assert!(
             !in_call_lookup_due(&state, now + chrono::TimeDelta::minutes(30)),
             "not once the call has ended"
@@ -2992,6 +3051,27 @@ mod tests {
             !in_call_lookup_due(&state, now),
             "a lookup that just started, even if it fails, is not repeated"
         );
+    }
+
+    #[test]
+    fn the_in_call_interval_setting_maps_to_its_choice_and_back() {
+        assert_eq!(in_call_refresh_index(5), 0);
+        assert_eq!(in_call_refresh_index(10), 1);
+        assert_eq!(
+            in_call_refresh_index(7),
+            1,
+            "snaps to the next longer choice"
+        );
+        assert_eq!(in_call_refresh_index(90), 3);
+        assert_eq!(in_call_refresh_index(0), 4);
+
+        let now = Local::now().fixed_offset();
+        let (window, mut state) = window_with(Vec::new(), now);
+        state.settings.in_call_refresh_minutes = 15;
+        state.settings.in_call_reminders_enabled = false;
+        refresh_view(&window, &state);
+        assert_eq!(window.get_in_call_refresh_index(), 2);
+        assert!(!window.get_in_call_reminders());
     }
 
     #[test]

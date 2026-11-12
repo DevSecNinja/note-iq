@@ -580,8 +580,14 @@ While reminders are on, NoteIQ looks up meetings in the background every 30
 minutes, and every 2 minutes while a reminder waits for a fresh transcript
 status. Turning the setting off stops reminders and these lookups at once.
 Separately, while a meeting is in progress and the capture window is open,
-NoteIQ looks up meetings every 5 minutes so the **Transcribed** tag follows the
-call.
+NoteIQ looks up meetings so the **Transcribed** tag follows the call. Choose
+how often with **Check meetings during calls** in **Settings**: every 5, 10
+(the default), 15, or 30 minutes, or **Off**. Each check starts WorkIQ and
+searches your calendar, so shorter intervals cost more lookups.
+
+**Remind me when a call I joined isn't transcribed** controls a reminder during
+calls. It is saved now and takes effect once that reminder ships
+([#26](https://github.com/DevSecNinja/note-iq/issues/26)).
 
 NoteIQ is not a packaged app, so it registers the notification sender under
 `HKCU\Software\Classes\AppUserModelId\DevSecNinja.NoteIQ` with its name and
