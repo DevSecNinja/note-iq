@@ -24,7 +24,11 @@ mod meeting_ui;
 #[cfg(windows)]
 mod open_note;
 #[cfg(windows)]
+mod reminder;
+#[cfg(windows)]
 mod settings_ui;
+#[cfg(windows)]
+mod toast;
 #[cfg(windows)]
 mod tray;
 #[cfg(windows)]

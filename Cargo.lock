@@ -3342,6 +3342,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "tray-icon",
+ "windows",
  "windows-sys 0.61.2",
  "winreg",
  "winresource",

@@ -223,6 +223,55 @@ kept, and a collision gets a numeric suffix instead of replacing another note.
 Typing alone does not rename a saved file. Obsidian links to a renamed file may
 need updating; NoteIQ does not rewrite vault links or rename closed notes.
 
+### Meeting templates
+
+Meeting templates give meeting notes a starting structure. They are off by default;
+turn on **Insert a template into new meeting notes** under **Meeting templates** in
+Settings and choose the **Default** template. When a note is connected to a meeting,
+by choosing it or automatically, and the note is empty, the default template is
+inserted. Text you typed is never replaced. A template you have not changed counts
+as an empty note: it is not saved on its own, it moves with the note to another
+meeting, and choosing **No meeting** removes it. Once you edit it, it stays.
+
+| Template        | Sections                                  |
+| --------------- | ----------------------------------------- |
+| General meeting | Agenda, Notes, Decisions, Action items    |
+| 1:1             | Updates, Discussion, Feedback, Follow-ups |
+| Customer call   | Attendees, Context, Asks, Next steps      |
+| Stand-up        | Yesterday, Today, Blockers                |
+
+While templates are on, the capture window shows a **Note template** list and
+**Insert template** below the note. Inserting replaces an empty note, or a template
+you have not changed, and adds the template after any text you wrote.
+
+The built-in templates are read-only. Under **Edit**, choose **New** for a blank
+template or **Duplicate** to start from a copy of the one shown, then name it and
+choose **Save template**. Your templates can be renamed, edited, and deleted.
+Use `###` headings so the sections nest under the note's **Notes** heading: a
+template with a `#` or `##` heading, such as `## Notes`, is rejected because it
+would clash with the note's own sections and stop the note from being reopened. In
+a template file edited outside NoteIQ, such headings are inserted as `###`.
+These placeholders are filled in from the meeting:
+
+| Placeholder   | Becomes                                                          |
+| ------------- | ---------------------------------------------------------------- |
+| `{title}`     | The meeting name                                                 |
+| `{date}`      | The meeting's local start date, `YYYY-MM-DD` (else today)        |
+| `{time}`      | The meeting's local start time, `HH:MM` (else now)               |
+| `{organizer}` | The organizer's name                                             |
+| `{attendees}` | The invitees' names, comma-separated, without rooms or organizer |
+
+Placeholders ignore case and spaces inside the braces. Saving a template with an
+unknown placeholder such as `{owner}` is rejected with an explanation; other
+braces, such as `{}` in code, are kept as typed.
+
+User templates are Markdown files in the `templates` folder beside the settings
+file, named after the template, such as `Weekly sync.md`. You can edit them in any
+editor; changes apply to the next meeting note. A file whose name is not a valid
+template name, or matches a built-in template, is ignored. If the default template
+is deleted or cannot be read, new meeting notes use **General meeting** and the log
+records why.
+
 ### Note layout
 
 New notes use the vault's capture properties with an editable Notes section and are
@@ -276,7 +325,8 @@ NoteIQ first preserves the original in a unique `settings-*.toml.bak` file
 beside it, then shows a recovery message and uses defaults. A backup or read
 failure stops startup rather than allowing defaults to overwrite unreadable settings.
 Besides the options in
-Settings, it accepts `author_name`. A hand-edited `note_filename` that is not
+Settings, it accepts `author_name` and `meeting_reminder_delay_minutes` (see
+[Note reminders after meetings](#note-reminders-after-meetings)). A hand-edited `note_filename` that is not
 valid falls back to the default, and the log records why without the template
 text.
 
@@ -498,6 +548,41 @@ diagnostics record the failure without names or email addresses.
 Markdown files are saved in OneDrive or an Obsidian vault, but that alone does
 not guarantee immediate indexing by WorkIQ. Indexing and query availability
 depend on the user's Microsoft 365 and WorkIQ configuration.
+
+### Note reminders after meetings
+
+When **Suggest a note after untranscribed meetings** is on (the default), NoteIQ
+shows a Windows notification a few minutes after a meeting ends without a Teams
+transcript: _Write a quick note for {meeting}?_, with the time and organizer, and
+**Write note** and **Dismiss** buttons. **Write note**, or clicking the
+notification, opens a note connected to that meeting, or the meeting's saved note
+if it already has one. A note you are writing is saved and closed first unless it
+is empty. Notifications follow Windows settings such as Do not disturb, and stay
+in Notification Center until dismissed.
+
+- The delay is 5 minutes, set by `meeting_reminder_delay_minutes` in the
+  settings file (at most 60). The transcript status is checked with a WorkIQ
+  lookup that starts after the delay, so a transcript that appears shortly
+  after the meeting ends still counts.
+- WorkIQ reports `isTranscriptAvailable` for Teams meetings. When it does not
+  say, for example for in-person meetings, NoteIQ still suggests a note.
+- There is no reminder for cancelled, declined, or all-day meetings; for
+  calendar blocks you organized with nobody invited, such as lunch; for the
+  meeting connected to the open note; for meetings that already have a saved
+  note; or for meetings that ended more than two hours ago, for example before
+  NoteIQ started.
+- Each meeting is suggested once. Shown reminders are remembered for seven days
+  in `meeting-reminders.json` beside `settings.toml`, so restarting NoteIQ does
+  not repeat them. A reminder Windows could not show is tried up to three times.
+
+While reminders are on, NoteIQ looks up meetings in the background every 30
+minutes, and every 2 minutes while a reminder waits for a fresh transcript
+status. Turning the setting off stops reminders and these lookups at once.
+
+NoteIQ is not a packaged app, so it registers the notification sender under
+`HKCU\Software\Classes\AppUserModelId\DevSecNinja.NoteIQ` with its name and
+an icon copied to `%LOCALAPPDATA%\DevSecNinja\NoteIQ\data`. The buttons open
+`noteiq://reminder/<id>` links, which reach the running NoteIQ, or start it.
 
 ## Diagnostics
 

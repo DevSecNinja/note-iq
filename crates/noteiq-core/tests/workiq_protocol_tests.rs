@@ -544,3 +544,52 @@ fn rejects_unrecognised_meeting_times() {
         );
     }
 }
+
+fn past_result(id: &str, extra: &str) -> Value {
+    json!({
+        "markdown": format!(
+            "- **Customer call**\n  - **time:** today at 10 AM to today at 10:30 AM\n  - **timeUntilMeeting:** event is in the past\n{extra}"
+        ),
+        "id": "h1",
+        "resourceId": id,
+        "entityType": "Meetings",
+        "resourceMetadata": {"meeting": {"title": "<Event>Customer call</Event>", "startTime": "11/3/2026"}}
+    })
+}
+
+#[test]
+fn reads_transcript_availability_and_the_current_rsvp_wording() {
+    let response = retrieval(vec![
+        past_result(
+            "transcribed",
+            "  - **isTranscriptAvailable:** true\n  - **additionalMetadata:** \\[{\"key\":\"RSVP Info\",\"value\":\"User RSVP: Meeting Organizer\"}\\]",
+        ),
+        past_result(
+            "not-transcribed",
+            "  - **isTranscriptAvailable:** false\n  - **additionalMetadata:** \\[{\"key\":\"RSVP Info\",\"value\":\"User RSVP: Declined\"}\\]",
+        ),
+        past_result("in-person", "  - **numberOfInvitees:** 0"),
+    ]);
+
+    let meetings = parse_meeting_results(&response, now()).unwrap();
+    let find = |id: &str| meetings.iter().find(|meeting| meeting.id == id).unwrap();
+
+    assert_eq!(find("transcribed").has_transcript, Some(true));
+    assert_eq!(
+        find("transcribed").your_rsvp,
+        Some(noteiq_core::model::Rsvp::Organizer)
+    );
+    assert_eq!(find("not-transcribed").has_transcript, Some(false));
+    assert!(find("not-transcribed").declined);
+    assert_eq!(find("in-person").has_transcript, None);
+
+    let plain = json!({"meetings": [{
+        "id": "plain",
+        "subject": "Design review",
+        "start": "2026-11-03T13:00:00+01:00",
+        "end": "2026-11-03T13:30:00+01:00",
+        "isTranscriptAvailable": "True"
+    }]});
+    let meetings = parse_meeting_results(&plain, now()).unwrap();
+    assert_eq!(meetings[0].has_transcript, Some(true));
+}

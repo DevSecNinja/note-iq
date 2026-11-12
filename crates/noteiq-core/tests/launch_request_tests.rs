@@ -1,5 +1,8 @@
 use noteiq_core::{
-    launch::{LaunchRequest, forward_message, parse_forward_message, parse_launch_request},
+    launch::{
+        ForwardRequest, LaunchRequest, forward_message, forward_request_message,
+        parse_forward_message, parse_forward_request, parse_launch_request, reminder_uri,
+    },
     model::CaptureSource,
 };
 
@@ -71,5 +74,50 @@ fn ignores_unexpected_forwarded_messages() {
         "open C:\\notes\\x.md",
     ] {
         assert_eq!(parse_forward_message(message), None, "{message:?}");
+    }
+}
+
+#[test]
+fn reminder_links_carry_only_a_well_formed_key() {
+    let reminder = "0123456789abcdef";
+    assert_eq!(
+        LaunchRequest::from_uri(&reminder_uri(reminder)).unwrap(),
+        LaunchRequest::MeetingReminder(reminder.to_owned())
+    );
+    assert_eq!(
+        LaunchRequest::from_uri("NOTEIQ://REMINDER/0123456789ABCDEF/").unwrap(),
+        LaunchRequest::MeetingReminder(reminder.to_owned())
+    );
+    for uri in [
+        "noteiq://reminder/",
+        "noteiq://reminder/0123456789abcde",
+        "noteiq://reminder/0123456789abcdefa",
+        "noteiq://reminder/0123456789abcdeg",
+        "noteiq://reminder/0123456789abcdef?path=x",
+        "noteiq://reminder/../0123456789abcdef",
+    ] {
+        assert!(LaunchRequest::from_uri(uri).is_err(), "{uri}");
+    }
+}
+
+#[test]
+fn forwarded_reminders_keep_their_key() {
+    let reminder = ForwardRequest::MeetingReminder("0123456789abcdef".to_owned());
+    assert_eq!(
+        parse_forward_request(&format!("{}\n", forward_request_message(&reminder))),
+        Some(reminder)
+    );
+    assert_eq!(
+        parse_forward_request("show cli"),
+        Some(ForwardRequest::Show(CaptureSource::Cli))
+    );
+    for message in [
+        "reminder",
+        "reminder ",
+        "reminder 0123456789ABCDEF",
+        "reminder 0123456789abcdef extra",
+        "reminder ../../file.md",
+    ] {
+        assert_eq!(parse_forward_request(message), None, "{message:?}");
     }
 }

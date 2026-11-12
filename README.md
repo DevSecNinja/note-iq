@@ -49,11 +49,12 @@ dprint check --allow-no-files
 ### Commit hooks
 
 Install the tools pinned in `.mise.toml` (for example, `mise install`), and make
-`cargo`, `dprint`, and `lefthook` available on your PATH. Run `lefthook install`
-after cloning: the tracked `.lefthook.toml` alone does not activate Git hooks.
-The pre-commit hook checks Rust and Markdown formatting and blocks the commit
-if either check fails or a required tool is missing. Use `cargo fmt --all` and
-`dprint fmt` to fix formatting before retrying.
+`cargo`, `dprint`, `gitleaks`, and `lefthook` available on your PATH. Run
+`lefthook install` after cloning: the tracked `.lefthook.toml` alone does not
+activate Git hooks. The pre-commit hook checks Rust and Markdown formatting and
+scans staged changes for secrets with gitleaks, and blocks the commit if a check
+fails or a required tool is missing. Use `cargo fmt --all` and `dprint fmt` to
+fix formatting before retrying.
 
 For an isolated linked worktree, keep its hooks separate from other checkouts:
 
@@ -122,6 +123,21 @@ The app registers the per-user `noteiq://new` protocol on first launch. This
 can be entered or invoked by a PowerToys Command Palette command. The CLI
 command `noteiq new` brings an open capture to the front, or starts a fresh
 capture when none is open.
+
+After a meeting ends without a Teams transcript, NoteIQ shows a Windows
+notification suggesting a quick note; **Write note** opens a note connected to
+that meeting. Turn this off with **Suggest a note after untranscribed meetings**
+in **Settings**. See [docs/setup.md](docs/setup.md#note-reminders-after-meetings).
+
+<p align="center">
+  <img src="docs/images/meeting-reminder.png" alt="A Windows notification from NoteIQ: Write a quick note for Q4 roadmap review? 14:00–14:30 · Alex Morgan. This meeting wasn't transcribed. Capture the key points while they're fresh. Buttons: Write note, Dismiss" width="440">
+</p>
+
+Turn on **Meeting templates** in **Settings** to start each meeting note from a
+template, such as **General meeting**, **1:1**, **Customer call**, or
+**Stand-up**, or one you create. Templates fill in placeholders such as
+`{title}` and `{attendees}` and never replace text you have typed. See
+[docs/setup.md](docs/setup.md#meeting-templates).
 
 The **Meeting** list starts with **No meeting**, followed by current, earlier,
 and upcoming meetings on two lines: the time and title, then details such as

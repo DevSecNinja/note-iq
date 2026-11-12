@@ -1,6 +1,7 @@
 use crate::{instance, launch, ui};
 use noteiq_core::{
     diagnostics::{default_log_directory, initialize_logging},
+    launch::{ForwardRequest, LaunchRequest},
     model::CaptureSource,
     settings::Settings,
 };
@@ -8,7 +9,7 @@ use std::{env, error::Error, path::PathBuf};
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let arguments = env::args().collect::<Vec<_>>();
-    let noteiq_core::launch::LaunchRequest::NewNote = launch::parse_arguments(&arguments)?;
+    let request = launch::parse_arguments(&arguments)?;
     let source = if arguments
         .get(1)
         .is_some_and(|argument| launch::is_noteiq_uri(argument))
@@ -20,7 +21,12 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         CaptureSource::Tray
     };
 
-    match instance::start_or_forward(source)? {
+    let forward = match request {
+        LaunchRequest::NewNote => ForwardRequest::Show(source),
+        LaunchRequest::MeetingReminder(key) => ForwardRequest::MeetingReminder(key),
+    };
+
+    match instance::start_or_forward(forward)? {
         instance::InstanceRole::Forwarded => return Ok(()),
         role @ instance::InstanceRole::Primary(_) => {
             let profile = env::var_os("USERPROFILE")
