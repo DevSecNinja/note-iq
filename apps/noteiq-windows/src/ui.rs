@@ -77,6 +77,8 @@ const REMINDER_LOOKUP_INTERVAL: Duration = Duration::from_secs(2 * 60);
 /// How often reminders refresh the calendar while nothing is due, so meetings added later in
 /// the day, or the next day's meetings, are known.
 const REMINDER_CALENDAR_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// How often a call in progress is saved to the reminder history.
+const CALL_SAVE_INTERVAL: Duration = Duration::from_secs(2 * 60);
 /// The "Check meetings during calls" choices, in minutes; 0 is Off.
 const IN_CALL_REFRESH_CHOICES: [u32; 5] = [5, 10, 15, 30, 0];
 
@@ -182,11 +184,17 @@ struct ReminderState {
     notifier: Option<Sender<ReminderJob>>,
     /// Shared with queued jobs, so turning reminders off stops toasts that have not appeared.
     enabled: Arc<AtomicBool>,
+    /// Shared with queued jobs: set while the user is in a call or that is unknown, so a
+    /// queued toast waits instead of interrupting the call.
+    blocked: Arc<AtomicBool>,
     /// Tells whether the user is in a call right now (`None` when unknown); unset in tests
     /// unless a test sets it.
     call_probe: Option<fn() -> Option<bool>>,
     /// Whether the latest conclusive check saw a call, so the call's end is saved.
     in_call: bool,
+    /// When the current call was last saved; a call in progress is saved every few minutes so
+    /// a restart keeps most of it.
+    call_saved: Option<Instant>,
 }
 
 impl AppState {
@@ -866,15 +874,22 @@ fn check_meeting_reminders(
     // that is unknown, such as a meeting that runs over its scheduled end.
     let call = state.reminders.call_probe.map(|probe| probe());
     let defer = call.is_some_and(|in_call| in_call != Some(false));
+    state.reminders.blocked.store(defer, Ordering::Relaxed);
     let in_call = call.flatten() == Some(true);
     let call_started = in_call && state.reminders.history.record_call(now);
     let call_ended = state.reminders.in_call && call == Some(Some(false));
+    let call_save_due = in_call
+        && state
+            .reminders
+            .call_saved
+            .is_none_or(|at| at.elapsed() >= CALL_SAVE_INTERVAL);
     if call.flatten().is_some() {
         state.reminders.in_call = in_call;
     }
-    if call_started || call_ended {
+    if call_started || call_ended || call_save_due {
         state.reminders.history.prune(now);
         save_reminder_history(state);
+        state.reminders.call_saved = in_call.then(Instant::now);
     }
     let due = if defer {
         Vec::new()
@@ -891,6 +906,7 @@ fn check_meeting_reminders(
             key: key.clone(),
             notes_root: state.settings.destination_root.clone(),
             enabled: state.reminders.enabled.clone(),
+            blocked: state.reminders.blocked.clone(),
         };
         let sent = state
             .reminders
@@ -3075,7 +3091,41 @@ mod tests {
 
         state.reminders.call_probe = Some(|| Some(false));
         check_meeting_reminders(&mut state, &sender, after);
-        assert_eq!(jobs.try_recv().unwrap().meeting.id, "current");
+        let job = jobs.try_recv().unwrap();
+        assert_eq!(job.meeting.id, "current");
+        assert!(!job.blocked.load(Ordering::Relaxed));
+
+        // A call that starts while the reminder is queued holds it back.
+        state.reminders.call_probe = Some(|| Some(true));
+        check_meeting_reminders(&mut state, &sender, after);
+        assert!(
+            job.blocked.load(Ordering::Relaxed),
+            "the queued job sees it"
+        );
+    }
+
+    #[test]
+    fn a_call_in_progress_is_saved_every_few_minutes() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("meeting-reminders.json");
+        let now = Local::now().fixed_offset();
+        let (_window, mut state) = window_with(Vec::new(), now);
+        state.reminders.history_path = Some(path.clone());
+        state.reminders.call_probe = Some(|| Some(true));
+        let (sender, _events) = mpsc::channel();
+
+        check_meeting_reminders(&mut state, &sender, now);
+        let later = now + TimeDelta::minutes(1);
+        check_meeting_reminders(&mut state, &sender, later);
+        assert_eq!(
+            ReminderHistory::load(&path).calls[0].end,
+            now,
+            "not saved on every check"
+        );
+
+        state.reminders.call_saved = Instant::now().checked_sub(CALL_SAVE_INTERVAL);
+        check_meeting_reminders(&mut state, &sender, later);
+        assert_eq!(ReminderHistory::load(&path).calls[0].end, later);
     }
 
     #[test]
