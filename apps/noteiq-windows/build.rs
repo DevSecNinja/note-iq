@@ -57,9 +57,21 @@ fn compile_icon() {
     std::fs::write(&path, icon).expect("write the NoteIQ icon");
     winresource::WindowsResource::new()
         .set_icon(path.to_str().expect("icon path is UTF-8"))
+        .set_manifest(MANIFEST)
         .set("ProductName", "NoteIQ")
         .set("FileDescription", "NoteIQ quick capture")
         .set("OriginalFilename", "noteiq.exe")
         .compile()
         .expect("embed the NoteIQ Windows icon and version information");
 }
+
+/// Names the package that gives NoteIQ a Windows identity when one is registered for the
+/// executable's folder (see `scripts/register-package.ps1`). Without that package, Windows
+/// ignores the `msix` element and NoteIQ runs as before. Keep it in step with
+/// `package/AppxManifest.xml`.
+const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="DevSecNinja.NoteIQ"/>
+  <msix xmlns="urn:schemas-microsoft-com:msix.v1" publisher="CN=DevSecNinja" packageName="DevSecNinja.NoteIQ" applicationId="NoteIQ"/>
+</assembly>
+"#;

@@ -21,6 +21,7 @@ global Icons {
     out property <string> calendar: "\u{E787}";
     out property <string> chevron: "\u{E70D}";
     out property <string> folder: "\u{E8B7}";
+    out property <string> edit: "\u{E70F}";
 }
 
 component IconButton inherits Rectangle {
@@ -588,6 +589,19 @@ export component MainWindow inherits Window {
     in-out property <bool> destination-error: false;
     // Windows 10 has the same glyphs in Segoe MDL2 Assets.
     in-out property <string> icon-font: "Segoe Fluent Icons";
+    // On-device AI Tidy up. `tidy-available` is true only when the setting is on and Windows
+    // can run the model.
+    in-out property <bool> tidy-setting: false;
+    in-out property <bool> tidy-available: false;
+    in-out property <string> tidy-availability-text;
+    in-out property <bool> tidy-running: false;
+    in-out property <bool> tidy-preview-visible: false;
+    in-out property <styled-text> tidy-diff;
+    in-out property <[string]> tidy-warnings;
+    in-out property <bool> tidy-undo-available: false;
+    in-out property <string> tidy-undo-label: "Undo tidy-up";
+    // Ctrl+Z restores the original note until the next edit.
+    in-out property <bool> tidy-undo-armed: false;
     property <int> meeting-change-focus-index: 0;
 
     changed meeting-change-confirmation-visible => {
@@ -625,6 +639,20 @@ export component MainWindow inherits Window {
     callback template-delete-requested();
     callback new-note-requested();
     callback tray-action-requested(int);
+    callback tidy-requested();
+    callback tidy-cancel-requested();
+    callback tidy-apply-requested();
+    callback tidy-discard-requested();
+    callback tidy-undo-requested();
+    callback tidy-setting-changed(bool);
+
+    changed tidy-preview-visible => {
+        if tidy-preview-visible {
+            tidy-apply-button.focus();
+        } else {
+            note-editor.focus();
+        }
+    }
 
     // Applies pending settings; Settings stays open while a value is rejected.
     function close-settings() {
@@ -640,8 +668,22 @@ export component MainWindow inherits Window {
     FocusScope {
         forward-focus: note-editor;
 
+        // Runs before the editor sees the key: the editor's own undo history cannot reach the
+        // text from before a tidy-up.
+        capture-key-pressed(event) => {
+            if root.tidy-undo-armed && event.modifiers.control && (event.text == "z" || event.text == "Z") {
+                root.tidy-undo-requested();
+                return accept;
+            }
+            reject
+        }
+
         key-pressed(event) => {
             if root.meeting-change-confirmation-visible {
+                accept
+            }
+            if root.tidy-preview-visible && event.text == Key.Escape {
+                root.tidy-discard-requested();
                 accept
             }
             if event.modifiers.control && (event.text == "s" || event.text == "S") {
@@ -704,6 +746,14 @@ export component MainWindow inherits Window {
                     icon-font: root.icon-font;
                     clicked => { root.open-requested(); }
                 }
+                if root.tidy-available && !root.settings-visible: IconButton {
+                    glyph: Icons.edit;
+                    label: "Tidy up";
+                    tip: "Tidy up with on-device AI. You review the changes first.";
+                    icon-font: root.icon-font;
+                    checked: root.tidy-running || root.tidy-preview-visible;
+                    clicked => { root.tidy-requested(); }
+                }
                 IconButton {
                     glyph: Icons.settings;
                     label: "Settings";
@@ -738,13 +788,37 @@ export component MainWindow inherits Window {
                 }
             }
 
+            if root.tidy-running: Rectangle {
+                background: #e0e7ff;
+                border-radius: 6px;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    padding-top: 6px;
+                    padding-bottom: 6px;
+                    spacing: 8px;
+                    Text {
+                        text: "Tidying up on this PC with on-device AI… Your note stays as it is until you review the changes.";
+                        color: #1e3a8a;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                    }
+                    LinkButton {
+                        text: "Cancel";
+                        clicked => { root.tidy-cancel-requested(); }
+                    }
+                }
+            }
+
             Rectangle {
                 min-width: 0px;
                 min-height: 0px;
                 vertical-stretch: 1;
 
                 Rectangle {
-                    visible: !root.settings-visible;
+                    visible: !root.settings-visible && !root.tidy-preview-visible;
                     VerticalLayout {
                         spacing: 8px;
 
@@ -752,6 +826,8 @@ export component MainWindow inherits Window {
                             min-height: 100px;
                             vertical-stretch: 1;
                             text <=> root.note-text;
+                            // A note being tidied or reviewed must not change underneath.
+                            read-only: root.tidy-running || root.tidy-preview-visible;
                             placeholder-text: "Start typing… notes save automatically.";
                             accessible-label: "Note contents";
                             font-family: "Segoe UI Variable";
@@ -778,6 +854,10 @@ export component MainWindow inherits Window {
                                 text: "Choose folder";
                                 clicked => { root.destination-requested(); }
                             }
+                            if root.tidy-undo-available: LinkButton {
+                                text: root.tidy-undo-label;
+                                clicked => { root.tidy-undo-requested(); }
+                            }
                             if root.templates-enabled: ComboBox {
                                 width: 180px;
                                 horizontal-stretch: 0;
@@ -788,6 +868,84 @@ export component MainWindow inherits Window {
                             if root.templates-enabled: Button {
                                 text: "Insert template";
                                 clicked => { root.note-template-insert-requested(root.note-template-index); }
+                            }
+                        }
+                    }
+                }
+
+                // Shown instead of the editor until the user applies or discards the suggestion.
+                // Not conditional, so the Apply button can take focus when it opens.
+                Rectangle {
+                    visible: root.tidy-preview-visible && !root.settings-visible;
+                    background: #ffffff;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #c7d2fe;
+
+                    VerticalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+
+                        Text {
+                            text: "Review the suggested tidy-up";
+                            color: #20232a;
+                            font-size: 14px;
+                            font-weight: 600;
+                        }
+                        Text {
+                            text: "Made on this PC by the Windows on-device AI model. Removed text is struck through in red and added text is underlined in green. Your note doesn't change unless you apply it, and you can undo it afterwards.";
+                            color: #5f6470;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                        if root.tidy-warnings.length > 0: Rectangle {
+                            background: #fef3c7;
+                            border-radius: 6px;
+                            VerticalLayout {
+                                padding: 8px;
+                                spacing: 2px;
+                                Text {
+                                    text: "Check before applying";
+                                    color: #92400e;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+                                for warning in root.tidy-warnings: Text {
+                                    text: "• " + warning;
+                                    color: #92400e;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                        ScrollView {
+                            vertical-stretch: 1;
+                            min-height: 80px;
+                            content-width: self.visible-width;
+
+                            VerticalLayout {
+                                padding: 4px;
+                                StyledText {
+                                    text: root.tidy-diff;
+                                    default-color: #20232a;
+                                    default-font-size: 15px;
+                                    default-font-family: "Segoe UI Variable";
+                                    accessible-role: text;
+                                    accessible-label: "Suggested changes";
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: end;
+                            spacing: 8px;
+                            Button {
+                                text: "Discard";
+                                clicked => { root.tidy-discard-requested(); }
+                            }
+                            tidy-apply-button := Button {
+                                text: "Apply";
+                                primary: true;
+                                clicked => { root.tidy-apply-requested(); }
                             }
                         }
                     }
@@ -930,6 +1088,39 @@ export component MainWindow inherits Window {
                                                 wrap: word-wrap;
                                             }
                                         }
+                                    }
+                                }
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    padding-top: 4px;
+                                    // Keeps the wrapped description clear of the scroll bar.
+                                    padding-right: 12px;
+
+                                    Text {
+                                        text: "On-device AI";
+                                        color: #20232a;
+                                        font-size: 13px;
+                                        font-weight: 600;
+                                    }
+                                    CheckBox {
+                                        text: "Offer Tidy up for short notes";
+                                        checked: root.tidy-setting;
+                                        toggled => {
+                                            root.tidy-setting = self.checked;
+                                            root.tidy-setting-changed(self.checked);
+                                        }
+                                    }
+                                    Text {
+                                        text: "Rewrites a short note more concisely with the AI model built into Windows. It runs on this PC, so your note isn't sent anywhere. You review every change before it's applied, can undo it, and the note records \"ai_tidied: on-device\".";
+                                        color: #5f6470;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                    }
+                                    Text {
+                                        text: root.tidy-availability-text;
+                                        color: #5f6470;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
                                     }
                                 }
                                 VerticalLayout {

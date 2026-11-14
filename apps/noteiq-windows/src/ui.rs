@@ -36,6 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::local_ai::{Availability, RewriteFailure};
 use crate::reminder::{ReminderJob, ReminderOutcome, spawn_notifier};
 use noteiq_core::{
     launch::ForwardRequest,
@@ -43,12 +44,15 @@ use noteiq_core::{
 };
 
 mod template_ui;
+mod tidy_ui;
 
 enum AppEvent {
     Meetings(u64, Result<Vec<Meeting>, WorkiqError>, Instant),
     Author(Option<String>),
     MeetingNote(NoteRequest, Result<Option<Box<Capture>>, SavedNoteError>),
     Reminder(String, ReminderOutcome),
+    Tidy(u64, Result<String, RewriteFailure>),
+    TidyAvailability(Availability),
 }
 
 #[derive(Clone)]
@@ -146,6 +150,7 @@ struct AppState {
     note_lookup_error: Option<String>,
     pending_meeting_change: Option<PendingMeetingChange>,
     reminders: ReminderState,
+    tidy: tidy_ui::TidyState,
 }
 
 /// Meeting reminders: meetings seen in lookups and the reminders already shown.
@@ -193,6 +198,7 @@ impl AppState {
             note_lookup_error: None,
             pending_meeting_change: None,
             reminders: ReminderState::default(),
+            tidy: tidy_ui::TidyState::default(),
         };
         state.capture.capture.author = state.effective_author();
         state
@@ -263,6 +269,7 @@ pub fn run(
     std::thread::spawn(move || {
         let _ = author_sender.send(AppEvent::Author(crate::author::display_name()));
     });
+    tidy_ui::check_availability(sender.clone());
     let ipc = match role {
         InstanceRole::Primary(receiver) => Some(receiver),
         InstanceRole::Forwarded => None,
@@ -395,6 +402,7 @@ fn bind_callbacks(
                 ui.set_saved(false);
                 ui.set_status_text(state.display_status().into());
                 ui.set_status_error(state.status_is_error());
+                tidy_ui::refresh(&ui, &state);
             }
         });
     }
@@ -688,6 +696,7 @@ fn bind_callbacks(
         tray.bind(window.as_weak());
     }
     template_ui::bind(window, state);
+    tidy_ui::bind(window, state, &sender);
 
     let timer = Timer::default();
     let ui_weak = ui_weak.clone();
@@ -722,6 +731,14 @@ fn bind_callbacks(
                 }
                 AppEvent::Reminder(key, outcome) => {
                     apply_reminder_outcome(&mut state, &key, outcome, Local::now().fixed_offset());
+                }
+                AppEvent::Tidy(generation, result) => {
+                    tidy_ui::finish(&ui, &mut state, generation, result);
+                }
+                AppEvent::TidyAvailability(availability) => {
+                    tracing::info!(?availability, "on-device AI availability checked");
+                    state.tidy.availability = availability;
+                    refresh_view(&ui, &state);
                 }
             }
         }
@@ -1133,6 +1150,7 @@ fn begin_capture(
     let now = Local::now().fixed_offset();
     let timezone = iana_time_zone::get_timezone().unwrap_or_else(|_| "local".to_owned());
     state.capture = CaptureController::new(Capture::new(source, now, timezone));
+    tidy_ui::reset(&mut state.tidy);
     state.pending_note = None;
     state.pending_meeting_change = None;
     state.note_lookup_error = None;
@@ -1435,6 +1453,7 @@ fn apply_meeting_note(
         Ok(Some(capture)) => {
             if close_capture_state(window, state) {
                 state.capture = CaptureController::new(*capture);
+                tidy_ui::reset(&mut state.tidy);
                 state.capture_open = true;
                 state.destination_error = false;
                 state.status = "Saved".to_owned();
@@ -1602,6 +1621,7 @@ fn refresh_view(window: &MainWindow, state: &AppState) {
     window.set_saved(!state.capture.is_dirty());
     window.set_destination_error(state.destination_error);
     window.set_meeting_change_confirmation_visible(state.pending_meeting_change.is_some());
+    tidy_ui::refresh(window, state);
 }
 
 #[cfg(test)]

@@ -131,6 +131,8 @@ pub struct Capture {
     pub meeting: Option<Meeting>,
     pub meeting_decision: MeetingDecision,
     pub path: Option<PathBuf>,
+    /// Set while the body holds an accepted on-device AI rewrite, written as `ai_tidied`.
+    pub ai_tidied: bool,
     pub(crate) first_saved_at: Option<DateTime<FixedOffset>>,
     pub(crate) filename_meeting_slug: Option<String>,
     /// Fixed at the first save, so changing the setting never renames notes already saved.
@@ -157,6 +159,7 @@ impl Capture {
             meeting: None,
             meeting_decision: MeetingDecision::Pending,
             path: None,
+            ai_tidied: false,
             first_saved_at: None,
             filename_meeting_slug: None,
             filename_template: None,

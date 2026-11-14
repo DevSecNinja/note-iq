@@ -38,6 +38,8 @@ pub struct Settings {
     pub meeting_templates_enabled: bool,
     /// Identifier of the template applied to new meeting notes.
     pub default_meeting_template: String,
+    /// Offer the on-device AI "Tidy up" action for short notes. Off until the user opts in.
+    pub tidy_up_enabled: bool,
 }
 
 impl Settings {
@@ -59,6 +61,7 @@ impl Settings {
             meeting_reminder_delay_minutes: 5,
             meeting_templates_enabled: false,
             default_meeting_template: "general".to_owned(),
+            tidy_up_enabled: false,
         }
     }
 
