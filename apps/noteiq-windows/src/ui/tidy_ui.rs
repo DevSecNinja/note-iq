@@ -6,7 +6,8 @@ use super::{AppEvent, AppState, persist_settings, refresh_view};
 use crate::local_ai::{self, Availability, RewriteFailure};
 use crate::ui_generated::MainWindow;
 use noteiq_core::tidy::{
-    TidyBlock, check_eligible, clean_output, diff_markdown, diff_words, fact_warnings,
+    TidyBlock, adds_notes_heading, check_eligible, clean_output, diff_markdown, diff_words,
+    fact_warnings,
 };
 use slint::{ComponentHandle, ModelRc, SharedString, StyledText, VecModel};
 use std::{
@@ -261,6 +262,8 @@ pub(super) fn finish(
                     "Could not tidy up: the on-device AI model returned nothing.".to_owned();
             } else if suggestion == running.original {
                 state.status = "Tidy up found nothing to change.".to_owned();
+            } else if adds_notes_heading(&running.original, &suggestion) {
+                state.status = "Could not tidy up: the suggestion adds a \"## Notes\" heading, which NoteIQ uses to find your note text.".to_owned();
             } else {
                 show_preview(window, &running.original, &suggestion);
                 state.tidy.preview = Some(Preview {
@@ -593,6 +596,23 @@ mod tests {
         assert!(window.get_tidy_undo_armed());
         undo(&window, &mut state);
         assert_eq!(state.capture.capture.body, ROUGH);
+    }
+
+    #[test]
+    fn a_suggestion_that_would_break_reopening_the_note_is_refused() {
+        let folder = tempfile::tempdir().unwrap();
+        let (window, mut state) = ready_window(folder.path());
+        type_text(&window, &mut state, ROUGH);
+        let job = start(&window, &mut state).unwrap();
+        finish(
+            &window,
+            &mut state,
+            job.generation,
+            Ok(format!("## Notes\n{TIDIED}")),
+        );
+        assert!(!window.get_tidy_preview_visible());
+        assert_eq!(state.capture.capture.body, ROUGH);
+        assert!(window.get_status_text().contains("\"## Notes\""));
     }
 
     #[test]

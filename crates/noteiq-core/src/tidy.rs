@@ -134,8 +134,8 @@ pub fn diff_words(before: &str, after: &str) -> Vec<Change> {
     group(steps)
 }
 
-/// Merges runs into changes. Within a run of edits, a space shared by both sides stays with
-/// the edits so a replaced phrase reads as one removal followed by one addition.
+/// Merges runs into changes, listing each run's removals before its additions. Spaces shared
+/// between edits stay `Same`, so the renderer can tell them from whitespace that changed.
 fn group(steps: Vec<(ChangeKind, &str)>) -> Vec<Change> {
     let mut changes: Vec<Change> = Vec::new();
     let mut removed = String::new();
@@ -150,24 +150,10 @@ fn group(steps: Vec<(ChangeKind, &str)>) -> Vec<Change> {
             }
         }
     };
-    let mut index = 0;
-    while index < steps.len() {
-        let (kind, text) = steps[index];
-        let pending = !removed.is_empty() || !added.is_empty();
-        let bridges = kind == ChangeKind::Same
-            && pending
-            && text.trim().is_empty()
-            && !text.contains('\n')
-            && steps
-                .get(index + 1)
-                .is_some_and(|(next, _)| *next != ChangeKind::Same);
+    for (kind, text) in steps {
         match kind {
             ChangeKind::Removed => removed.push_str(text),
             ChangeKind::Added => added.push_str(text),
-            ChangeKind::Same if bridges => {
-                removed.push_str(text);
-                added.push_str(text);
-            }
             ChangeKind::Same => {
                 flush(&mut changes, &mut removed, &mut added);
                 match changes.last_mut() {
@@ -179,7 +165,6 @@ fn group(steps: Vec<(ChangeKind, &str)>) -> Vec<Change> {
                 }
             }
         }
-        index += 1;
     }
     flush(&mut changes, &mut removed, &mut added);
     changes
@@ -187,71 +172,157 @@ fn group(steps: Vec<(ChangeKind, &str)>) -> Vec<Change> {
 
 const REMOVED_COLOR: &str = "#b91c1c";
 const ADDED_COLOR: &str = "#15803d";
-const LINE_BREAK_MARK: &str = "¶";
+const LINE_BREAK_MARK: char = '¶';
+
+/// Text on one side of an edit, with whether it changed or is a space shared between edits.
+type Side = Vec<(String, bool)>;
 
 /// Renders `changes` as the Markdown subset Slint's `StyledText` accepts: removals struck
 /// through in red, additions underlined in green. Every line of the note stays a line, and
-/// the note's own Markdown is escaped so it shows literally. Changed whitespace that would
-/// otherwise look unchanged shows as marks: `·` for a space, `→` for a tab, `¶` for a line
-/// break.
+/// the note's own Markdown is escaped so it shows literally. A replaced phrase reads as one
+/// removal followed by one addition. Changed whitespace at the edge of a change, where it
+/// would otherwise look unchanged, shows as marks: `·` for a space, `→` for a tab, `¶` for a
+/// line break.
 pub fn diff_markdown(changes: &[Change]) -> String {
     let mut output = String::new();
     let mut at_line_start = true;
-    let mut previous = ChangeKind::Same;
-    for change in changes {
+    let (mut removed, mut added): (Side, Side) = (Vec::new(), Vec::new());
+    for (index, change) in changes.iter().enumerate() {
+        match change.kind {
+            ChangeKind::Removed => removed.push((change.text.clone(), true)),
+            ChangeKind::Added => added.push((change.text.clone(), true)),
+            ChangeKind::Same => {
+                let bridges = (!removed.is_empty() || !added.is_empty())
+                    && change.text.trim().is_empty()
+                    && !change.text.contains('\n')
+                    && changes
+                        .get(index + 1)
+                        .is_some_and(|next| next.kind != ChangeKind::Same);
+                if bridges {
+                    removed.push((change.text.clone(), false));
+                    added.push((change.text.clone(), false));
+                    continue;
+                }
+                flush_edit(&mut output, &mut at_line_start, &mut removed, &mut added);
+                push_same(&mut output, &mut at_line_start, &change.text);
+            }
+        }
+    }
+    flush_edit(&mut output, &mut at_line_start, &mut removed, &mut added);
+    output
+}
+
+fn push_same(output: &mut String, at_line_start: &mut bool, text: &str) {
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            output.push('\n');
+            *at_line_start = true;
+        }
+        let core = line.trim();
+        if core.is_empty() {
+            push_spaces(output, line, *at_line_start);
+            continue;
+        }
+        push_spaces(
+            output,
+            &line[..line.len() - line.trim_start().len()],
+            *at_line_start,
+        );
+        output.push_str(&escape_markdown(core));
+        *at_line_start = false;
+        push_spaces(output, &line[line.trim_end().len()..], false);
+    }
+}
+
+fn flush_edit(output: &mut String, at_line_start: &mut bool, removed: &mut Side, added: &mut Side) {
+    // A space shared after the last edit on one side belongs to neither side alone.
+    for side in [&mut *removed, &mut *added] {
+        while side.last().is_some_and(|(_, changed)| !changed) {
+            side.pop();
+        }
+    }
+    if removed.iter().any(|(_, changed)| *changed) {
+        push_side(output, at_line_start, ChangeKind::Removed, removed);
+    }
+    if added.iter().any(|(_, changed)| *changed) {
         // A replacement reads as "old new" rather than one run-together word.
-        if previous == ChangeKind::Removed
-            && change.kind == ChangeKind::Added
+        if !removed.is_empty()
             && !output.ends_with([' ', '\u{00A0}', '\n'])
-            && !change.text.starts_with([' ', '\n'])
+            && !added[0].0.starts_with(char::is_whitespace)
         {
             output.push(' ');
         }
-        previous = change.kind;
-        let whitespace_only = change.kind != ChangeKind::Same && change.text.trim().is_empty();
-        let text = match change.kind {
-            // A removed line break stays on one line, so joined lines are visible.
-            ChangeKind::Removed => change.text.replace('\n', LINE_BREAK_MARK),
-            ChangeKind::Added if whitespace_only => {
-                change.text.replace('\n', &format!("{LINE_BREAK_MARK}\n"))
+        push_side(output, at_line_start, ChangeKind::Added, added);
+    }
+    removed.clear();
+    added.clear();
+}
+
+/// Renders one side of an edit line by line. Whitespace that changed is marked where it
+/// starts or ends a line of the edit; between words it stays a plain space, and so does a
+/// single space separating the edit's words from unchanged text.
+fn push_side(output: &mut String, at_line_start: &mut bool, kind: ChangeKind, side: &Side) {
+    // Characters with whether they changed; changed line breaks become marks.
+    let mut characters: Vec<(char, bool)> = Vec::new();
+    for (text, changed) in side {
+        for character in text.chars() {
+            match character {
+                '\n' if kind == ChangeKind::Removed => characters.push((LINE_BREAK_MARK, true)),
+                '\n' => {
+                    characters.push((LINE_BREAK_MARK, true));
+                    characters.push(('\n', true));
+                }
+                _ => characters.push((character, *changed)),
             }
-            _ => change.text.clone(),
-        };
-        for (index, line) in text.split('\n').enumerate() {
-            if index > 0 {
-                output.push('\n');
-                at_line_start = true;
-            }
-            if line.is_empty() {
-                continue;
-            }
-            if whitespace_only {
-                let marks: String = line
-                    .chars()
-                    .map(|c| match c {
-                        '\t' => '→',
-                        c if c.is_whitespace() => '·',
-                        c => c,
-                    })
-                    .collect();
-                push_styled(&mut output, change.kind, &marks);
-                at_line_start = false;
-                continue;
-            }
-            let core = line.trim();
-            if core.is_empty() {
-                push_spaces(&mut output, line, at_line_start);
-                continue;
-            }
-            let leading = &line[..line.len() - line.trim_start().len()];
-            let trailing = &line[line.trim_end().len()..];
-            push_spaces(&mut output, leading, at_line_start);
-            push_styled(&mut output, change.kind, core);
-            at_line_start = false;
-            push_spaces(&mut output, trailing, at_line_start);
         }
     }
-    output
+    let has_words = characters
+        .iter()
+        .any(|(c, _)| !c.is_whitespace() && *c != LINE_BREAK_MARK);
+    for (index, line) in characters.split(|(c, _)| *c == '\n').enumerate() {
+        if index > 0 {
+            output.push('\n');
+            *at_line_start = true;
+        }
+        let first = line.iter().position(|(c, _)| !c.is_whitespace());
+        let last = line.iter().rposition(|(c, _)| !c.is_whitespace());
+        let separator = |edge: &[(char, bool)]| has_words && matches!(edge, [(' ', _)]);
+        let (mark_leading, mark_trailing) = match (first, last) {
+            (Some(first), Some(last)) => {
+                (!separator(&line[..first]), !separator(&line[last + 1..]))
+            }
+            _ => (true, true),
+        };
+        let shown: String = line
+            .iter()
+            .enumerate()
+            .map(|(at, (c, changed))| {
+                let edge = if first.is_none_or(|first| at < first) {
+                    mark_leading
+                } else {
+                    last.is_some_and(|last| at > last) && mark_trailing
+                };
+                match (c, *changed && edge) {
+                    ('\t', true) => '→',
+                    (c, true) if c.is_whitespace() => '·',
+                    (c, _) => *c,
+                }
+            })
+            .collect();
+        let core = shown.trim();
+        if core.is_empty() {
+            push_spaces(output, &shown, *at_line_start);
+            continue;
+        }
+        push_spaces(
+            output,
+            &shown[..shown.len() - shown.trim_start().len()],
+            *at_line_start,
+        );
+        push_styled(output, kind, core);
+        *at_line_start = false;
+        push_spaces(output, &shown[shown.trim_end().len()..], false);
+    }
 }
 
 fn push_styled(output: &mut String, kind: ChangeKind, text: &str) {
@@ -434,24 +505,77 @@ fn uncertainty(text: &str, words: &[String]) -> usize {
 }
 
 /// Words that start a sentence or a list item are capitalized anyway, so only capitalized
-/// words elsewhere count as names.
-fn names(text: &str) -> Vec<String> {
+/// words elsewhere count as names. With `owner_labels`, a capitalized label before a colon,
+/// such as "Alice" in "- Alice: ship beta", counts too, so a dropped owner is noticed.
+fn names(text: &str, owner_labels: bool) -> Vec<String> {
+    let tokens = tokens(text);
     let mut found = Vec::new();
     let mut sentence_start = true;
-    for token in tokens(text) {
+    for (index, token) in tokens.iter().enumerate() {
         let first = token.chars().next().unwrap_or(' ');
         if first.is_alphanumeric() {
-            if !sentence_start && first.is_uppercase() && token.chars().count() > 1 {
-                found.push(token.to_owned());
+            let label = owner_labels && tokens.get(index + 1) == Some(&":");
+            if (!sentence_start || label) && first.is_uppercase() && token.chars().count() > 1 {
+                found.push((*token).to_owned());
             }
             sentence_start = false;
-        } else if matches!(token, "\n" | "." | ":" | "?" | "!" | ";") {
+        } else if matches!(*token, "\n" | "." | ":" | "?" | "!" | ";") {
             sentence_start = true;
-        } else if !(token.trim().is_empty() || matches!(token, "-" | "*" | "+" | "#" | ">")) {
+        } else if !(token.trim().is_empty() || matches!(*token, "-" | "*" | "+" | "#" | ">")) {
             sentence_start = false;
         }
     }
     found
+}
+
+/// Day and month names with their usual abbreviations; other words must match exactly, so
+/// "Caroline" becoming "Carol" is still a change.
+const ABBREVIATIONS: [(&str, &[&str]); 19] = [
+    ("monday", &["mon"]),
+    ("tuesday", &["tue", "tues"]),
+    ("wednesday", &["wed"]),
+    ("thursday", &["thu", "thur", "thurs"]),
+    ("friday", &["fri"]),
+    ("saturday", &["sat"]),
+    ("sunday", &["sun"]),
+    ("january", &["jan"]),
+    ("february", &["feb"]),
+    ("march", &["mar"]),
+    ("april", &["apr"]),
+    ("june", &["jun"]),
+    ("july", &["jul"]),
+    ("august", &["aug"]),
+    ("september", &["sep", "sept"]),
+    ("october", &["oct"]),
+    ("november", &["nov"]),
+    ("december", &["dec"]),
+    ("tomorrow", &["tmrw", "tmr"]),
+];
+
+fn canonical(word: &str) -> &str {
+    ABBREVIATIONS
+        .iter()
+        .find(|(full, short)| *full == word || short.contains(&word))
+        .map_or(word, |(full, _)| full)
+}
+
+/// Whether `name` (lowercase) appears among `words`, allowing known abbreviations.
+fn mentioned(name: &str, words: &BTreeSet<&str>) -> bool {
+    let name = canonical(name);
+    words.iter().any(|word| canonical(word) == name)
+}
+
+/// The saved note finds the editable text after its only `## Notes` heading, so a suggestion
+/// must not add another one outside a code fence: the note would no longer reopen.
+pub fn adds_notes_heading(original: &str, suggestion: &str) -> bool {
+    // The leading line keeps a "---" block in the text from being read as front matter.
+    let count = |text: &str| {
+        crate::saved_note::headings(&format!("\n{text}"))
+            .iter()
+            .filter(|(_, _, heading)| *heading == "## Notes")
+            .count()
+    };
+    count(suggestion) > count(original)
 }
 
 /// Deterministic checks for facts a rewrite may have changed. They catch numbers, negations,
@@ -510,23 +634,16 @@ pub fn fact_warnings(before: &str, after: &str) -> Vec<FactWarning> {
     let known: BTreeSet<&str> = before_words.iter().map(String::as_str).collect();
     let kept: BTreeSet<&str> = after_words.iter().map(String::as_str).collect();
     let mut named = BTreeSet::new();
-    for name in names(before) {
+    for name in names(before, true) {
         let lower = name.to_lowercase();
-        // "Fri" becoming "Friday", or the reverse, still names the same thing.
-        let shortened_or_expanded = kept.iter().any(|word| {
-            word.chars().count() >= 3 && (lower.starts_with(word) || word.starts_with(&lower))
-        });
-        if !kept.contains(lower.as_str()) && !shortened_or_expanded && named.insert(lower) {
+        if !mentioned(&lower, &kept) && named.insert(lower) {
             warnings.push(FactWarning::NameRemoved(name));
         }
     }
-    for name in names(&after) {
+    // Labels the rewrite introduces, such as "Decision:", are not names.
+    for name in names(&after, false) {
         let lower = name.to_lowercase();
-        // "fri" becoming "Friday" or "q1" becoming "Q1" is an expansion, not a new name.
-        let expanded = known.iter().any(|word| {
-            word.chars().count() >= 3 && (lower.starts_with(word) || word.starts_with(&lower))
-        });
-        if !known.contains(lower.as_str()) && !expanded && named.insert(lower) {
+        if !mentioned(&lower, &known) && named.insert(lower) {
             warnings.push(FactWarning::NameAdded(name));
         }
     }

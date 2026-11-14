@@ -1,6 +1,6 @@
 use noteiq_core::tidy::{
-    AI_WATERMARK, Change, ChangeKind, FactWarning, MAX_TIDY_CHARS, TidyBlock, check_eligible,
-    clean_output, diff_markdown, diff_words, fact_warnings,
+    AI_WATERMARK, Change, ChangeKind, FactWarning, MAX_TIDY_CHARS, TidyBlock, adds_notes_heading,
+    check_eligible, clean_output, diff_markdown, diff_words, fact_warnings,
 };
 
 const ROUGH: &str = "q4 roadmap review w/ alex, priya
@@ -202,6 +202,62 @@ fn the_diff_renders_as_escaped_markdown_line_by_line() {
         diff_markdown(&changes),
         "\u{a0}<font color=\"#b91c1c\">~~gone ¶next~~</font>"
     );
+}
+
+#[test]
+fn whitespace_changed_inside_a_mixed_edit_is_marked_but_shared_spaces_are_not() {
+    let respaced = diff_markdown(&diff_words("a  cat", "a dog"));
+    assert!(respaced.contains("~~··cat~~"), "{respaced}");
+    // One space before the new word just separates it, so it stays plain.
+    assert!(
+        respaced.ends_with(" <font color=\"#15803d\"><u>dog</u></font>"),
+        "{respaced}"
+    );
+    let tab = diff_markdown(&diff_words("a cat", "a\tdog"));
+    assert!(tab.contains("<u>→dog</u>"), "{tab}");
+    let new_line = diff_markdown(&diff_words("a", "a\nb"));
+    assert!(
+        new_line.ends_with("<u>¶</u></font>\n<font color=\"#15803d\"><u>b</u></font>"),
+        "{new_line}"
+    );
+    // The spaces between the replaced words are shared, so they show as plain spaces once
+    // on each side of the replacement.
+    let phrase = diff_markdown(&diff_words("review w/ alex, priya", "with Alex and Priya."));
+    assert!(!phrase.contains('·'), "{phrase}");
+    assert_eq!(phrase.matches("~~").count(), 2, "{phrase}");
+    assert_eq!(phrase.matches("<u>").count(), 1, "{phrase}");
+    let demo = diff_markdown(&diff_words(ROUGH, CONCISE));
+    assert!(!demo.contains('·') && !demo.contains('¶'), "{demo}");
+}
+
+#[test]
+fn a_dropped_owner_label_is_flagged_but_new_labels_are_not() {
+    assert_eq!(
+        fact_warnings("- Alice: ship beta", "- Ship beta."),
+        vec![FactWarning::NameRemoved("Alice".into())]
+    );
+    assert!(fact_warnings("- ship beta, alice", "- Decision: Ship beta, Alice.").is_empty());
+}
+
+#[test]
+fn only_known_abbreviations_count_as_the_same_name() {
+    assert_eq!(
+        fact_warnings("call with Caroline", "Call with Carol."),
+        vec![
+            FactWarning::NameRemoved("Caroline".into()),
+            FactWarning::NameAdded("Carol".into())
+        ]
+    );
+    assert!(fact_warnings("sync on Sept 3", "Sync on September 3.").is_empty());
+}
+
+#[test]
+fn a_suggestion_adding_a_notes_heading_is_detected() {
+    assert!(adds_notes_heading("rough", "## Notes\n- Tidy"));
+    assert!(adds_notes_heading("rough", "---\nx\n---\n## Notes"));
+    assert!(!adds_notes_heading("rough", "```\n## Notes\n```"));
+    assert!(!adds_notes_heading("rough", "### Notes\n- Tidy"));
+    assert!(!adds_notes_heading("## Notes\nrough", "## Notes\n- Tidy"));
 }
 
 #[test]
