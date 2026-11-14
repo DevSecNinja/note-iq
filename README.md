@@ -124,10 +124,11 @@ can be entered or invoked by a PowerToys Command Palette command. The CLI
 command `noteiq new` brings an open capture to the front, or starts a fresh
 capture when none is open.
 
-After a meeting ends without a Teams transcript, NoteIQ shows a Windows
-notification suggesting a quick note; **Write note** opens a note connected to
-that meeting. Turn this off with **Suggest a note after untranscribed meetings**
-in **Settings**. See [docs/setup.md](docs/setup.md#note-reminders-after-meetings).
+After a Teams meeting you joined on this PC ends without a transcript, NoteIQ
+shows a Windows notification suggesting a quick note; **Write note** opens a
+note connected to that meeting. Turn this off with **Suggest a note after
+untranscribed meetings** in **Settings**. See
+[docs/setup.md](docs/setup.md#note-reminders-after-meetings).
 
 <p align="center">
   <img src="docs/images/meeting-reminder.png" alt="A Windows notification from NoteIQ: Write a quick note for Q4 roadmap review? 14:00–14:30 · Alex Morgan. This meeting wasn't transcribed. Capture the key points while they're fresh. Buttons: Write note, Dismiss" width="440">
@@ -141,7 +142,7 @@ template, such as **General meeting**, **1:1**, **Customer call**, or
 
 The **Meeting** list starts with **No meeting**, followed by current, earlier,
 and upcoming meetings on two lines: the time and title, then details such as
-**Now**, how long the meeting runs, the organizer, and how many people are invited. A note attaches automatically
+**Now**, **Transcribed**, how long the meeting runs, the organizer, and how many people are invited. A note attaches automatically
 when exactly one meeting is in progress, including one that starts while an
 empty note is open; a meeting you choose, or **No meeting**, is never replaced.
 The tray process retains the list between notes, and **Refresh meetings** at the

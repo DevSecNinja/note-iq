@@ -6,6 +6,9 @@ mod app;
 #[allow(unsafe_code)]
 mod author;
 #[cfg(windows)]
+#[allow(unsafe_code)]
+mod call_presence;
+#[cfg(windows)]
 mod error_ui;
 #[cfg(windows)]
 #[allow(unsafe_code)]

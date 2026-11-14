@@ -16,10 +16,19 @@ pub struct ReminderJob {
     pub notes_root: PathBuf,
     /// Cleared when reminders are turned off; checked again right before the toast appears.
     pub enabled: Arc<AtomicBool>,
+    /// Set while the user is in a call or that is unknown; the reminder then waits.
+    pub blocked: Arc<AtomicBool>,
+}
+
+impl ReminderJob {
+    fn deliverable(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed) && !self.blocked.load(Ordering::Relaxed)
+    }
 }
 
 /// Whether a reminder was handled. `Delivered` includes a meeting that turned out to have a
-/// note, so it is not checked again. `Cancelled` means reminders were turned off first.
+/// note, so it is not checked again. `Cancelled` means reminders were turned off, or a call
+/// started, before it appeared; it does not count as an attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReminderOutcome {
     Delivered,
@@ -37,11 +46,11 @@ pub fn spawn_notifier(
     thread::spawn(move || {
         let mut registered = false;
         for job in receiver {
-            if !job.enabled.load(Ordering::Relaxed) {
+            if !job.deliverable() {
                 report(job.key, ReminderOutcome::Cancelled);
                 continue;
             }
-            match find_meeting_note(&Destination::new(job.notes_root), &job.meeting) {
+            match find_meeting_note(&Destination::new(job.notes_root.clone()), &job.meeting) {
                 Ok(Some(_)) => {
                     tracing::info!("Skipped a meeting reminder because the meeting has a note");
                     report(job.key, ReminderOutcome::Delivered);
@@ -56,8 +65,9 @@ pub fn spawn_notifier(
                     tracing::warn!(failure_class = "notification_registration_failed", message);
                 }
             }
-            // The notes folder lookup can take a while: reminders may have been turned off.
-            if !job.enabled.load(Ordering::Relaxed) {
+            // The notes folder lookup can take a while: reminders may have been turned off, or
+            // a call may have started.
+            if !job.deliverable() {
                 report(job.key, ReminderOutcome::Cancelled);
                 continue;
             }

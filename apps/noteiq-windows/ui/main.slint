@@ -9,6 +9,7 @@ export struct MeetingRow {
     title: string,
     details: string,
     now: bool,
+    transcribed: bool,
     past: bool,
 }
 
@@ -182,7 +183,7 @@ component MeetingListItem inherits FocusScope {
                 accessible-role: none;
             }
 
-            if root.entry.now || root.entry.details != "": HorizontalLayout {
+            if root.entry.now || root.entry.transcribed || root.entry.details != "": HorizontalLayout {
                 if root.entry.now: Text {
                     text: "Now";
                     color: #166534;
@@ -190,8 +191,15 @@ component MeetingListItem inherits FocusScope {
                     font-weight: 600;
                     accessible-role: none;
                 }
+                if root.entry.transcribed: Text {
+                    text: root.entry.now ? " · Transcribed" : "Transcribed";
+                    color: #6b21a8;
+                    font-size: 12px;
+                    font-weight: 600;
+                    accessible-role: none;
+                }
                 Text {
-                    text: root.entry.now && root.entry.details != "" ? " · " + root.entry.details : root.entry.details;
+                    text: (root.entry.now || root.entry.transcribed) && root.entry.details != "" ? " · " + root.entry.details : root.entry.details;
                     color: #5f6470;
                     font-size: 12px;
                     overflow: elide;
@@ -343,6 +351,27 @@ component MeetingPicker inherits Rectangle {
                     Text {
                         text: "Now";
                         color: #166534;
+                        font-size: 11px;
+                        font-weight: 600;
+                        accessible-role: none;
+                    }
+                }
+            }
+        }
+
+        if root.current.transcribed: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                background: #f3e8ff;
+                border-radius: 9px;
+                HorizontalLayout {
+                    padding-left: 7px;
+                    padding-right: 7px;
+                    padding-top: 1px;
+                    padding-bottom: 1px;
+                    Text {
+                        text: "Transcribed";
+                        color: #6b21a8;
                         font-size: 11px;
                         font-weight: 600;
                         accessible-role: none;
@@ -560,6 +589,9 @@ export component MainWindow inherits Window {
     in-out property <bool> settings-visible: false;
     in-out property <bool> auto-connect: true;
     in-out property <bool> meeting-reminders: true;
+    in-out property <bool> in-call-reminders: true;
+    // Index into the "Check meetings during calls" choices: 5, 10, 15, 30 minutes, or Off.
+    in-out property <int> in-call-refresh-index: 1;
     in-out property <string> hotkey-text: "Win+Shift+N";
     in-out property <string> hotkey-error;
     in-out property <bool> hotkey-enabled: true;
@@ -611,6 +643,8 @@ export component MainWindow inherits Window {
     callback destination-requested();
     callback auto-connect-changed(bool);
     callback meeting-reminders-changed(bool);
+    callback in-call-reminders-changed(bool);
+    callback in-call-refresh-changed(int);
     callback hotkey-changed(string);
     callback hotkey-enabled-changed(bool);
     callback note-filename-edited(string);
@@ -854,6 +888,29 @@ export component MainWindow inherits Window {
                                     toggled => {
                                         root.meeting-reminders = self.checked;
                                         root.meeting-reminders-changed(self.checked);
+                                    }
+                                }
+                                CheckBox {
+                                    text: "Remind me when a call I joined isn't transcribed";
+                                    checked: root.in-call-reminders;
+                                    toggled => {
+                                        root.in-call-reminders = self.checked;
+                                        root.in-call-reminders-changed(self.checked);
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text {
+                                        text: "Check meetings during calls";
+                                        color: #383b43;
+                                        font-size: 13px;
+                                        vertical-alignment: center;
+                                    }
+                                    ComboBox {
+                                        model: ["Every 5 minutes", "Every 10 minutes", "Every 15 minutes", "Every 30 minutes", "Off"];
+                                        current-index <=> root.in-call-refresh-index;
+                                        accessible-label: "Check meetings during calls";
+                                        selected(value) => { root.in-call-refresh-changed(self.current-index); }
                                     }
                                 }
                                 CheckBox {

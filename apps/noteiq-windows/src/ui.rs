@@ -15,7 +15,7 @@ use noteiq_core::{
     capture::CaptureController,
     destination::{Destination, DestinationError},
     diagnostics::{DiagnosticEvent, DiagnosticOperation, FailureClass},
-    meeting::{browse_meetings, choice_label, list_entry},
+    meeting::{browse_meetings, choice_label, list_entry, meetings_in_progress},
     model::{Capture, CaptureSource, Meeting, MeetingDecision},
     note_filename::NoteFilename,
     saved_note::{SavedNoteError, find_meeting_note, same_occurrence},
@@ -77,6 +77,24 @@ const REMINDER_LOOKUP_INTERVAL: Duration = Duration::from_secs(2 * 60);
 /// How often reminders refresh the calendar while nothing is due, so meetings added later in
 /// the day, or the next day's meetings, are known.
 const REMINDER_CALENDAR_INTERVAL: Duration = Duration::from_secs(30 * 60);
+/// How often a call in progress is saved to the reminder history.
+const CALL_SAVE_INTERVAL: Duration = Duration::from_secs(2 * 60);
+/// The "Check meetings during calls" choices, in minutes; 0 is Off.
+const IN_CALL_REFRESH_CHOICES: [u32; 5] = [5, 10, 15, 30, 0];
+
+/// The choice shown for a saved interval. A hand-edited value snaps to the next longer choice,
+/// so it never checks more often than the user asked.
+fn in_call_refresh_index(minutes: u32) -> i32 {
+    let index = if minutes == 0 {
+        IN_CALL_REFRESH_CHOICES.len() - 1
+    } else {
+        IN_CALL_REFRESH_CHOICES
+            .iter()
+            .position(|&choice| choice >= minutes)
+            .unwrap_or(IN_CALL_REFRESH_CHOICES.len() - 2)
+    };
+    i32::try_from(index).unwrap_or_default()
+}
 const NO_MEETING: &str = "No meeting";
 
 fn no_meeting_row() -> MeetingRow {
@@ -89,12 +107,17 @@ fn no_meeting_row() -> MeetingRow {
 
 fn meeting_row(meeting: &Meeting, now: DateTime<FixedOffset>) -> MeetingRow {
     let entry = list_entry(meeting, now);
+    let mut label = choice_label(meeting);
+    if entry.transcribed {
+        label.push_str(" · Transcribed");
+    }
     MeetingRow {
-        label: choice_label(meeting).into(),
+        label: label.into(),
         time: entry.time.into(),
         title: entry.title.into(),
         details: entry.details.into(),
         now: entry.now,
+        transcribed: entry.transcribed,
         past: entry.past,
     }
 }
@@ -161,6 +184,17 @@ struct ReminderState {
     notifier: Option<Sender<ReminderJob>>,
     /// Shared with queued jobs, so turning reminders off stops toasts that have not appeared.
     enabled: Arc<AtomicBool>,
+    /// Shared with queued jobs: set while the user is in a call or that is unknown, so a
+    /// queued toast waits instead of interrupting the call.
+    blocked: Arc<AtomicBool>,
+    /// Tells whether the user is in a call right now (`None` when unknown); unset in tests
+    /// unless a test sets it.
+    call_probe: Option<fn() -> Option<bool>>,
+    /// Whether the latest conclusive check saw a call, so the call's end is saved.
+    in_call: bool,
+    /// When the current call was last saved; a call in progress is saved every few minutes so
+    /// a restart keeps most of it.
+    call_saved: Option<Instant>,
 }
 
 impl AppState {
@@ -311,6 +345,7 @@ pub fn run(
         state.reminders.notifier = Some(spawn_notifier(move |key, outcome| {
             let _ = reminder_sender.send(AppEvent::Reminder(key, outcome));
         }));
+        state.reminders.call_probe = Some(crate::call_presence::teams_call_active);
     }
 
     start_meeting_lookup(&state, &sender, false);
@@ -533,6 +568,38 @@ fn bind_callbacks(
     {
         let state = state.clone();
         let ui_weak = ui_weak.clone();
+        window.on_in_call_reminders_changed(move |enabled| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let mut state = state.borrow_mut();
+            state.settings.in_call_reminders_enabled = enabled;
+            persist_settings(&mut state);
+            refresh_view(&ui, &state);
+        });
+    }
+    {
+        let state = state.clone();
+        let ui_weak = ui_weak.clone();
+        window.on_in_call_refresh_changed(move |index| {
+            let Some(ui) = ui_weak.upgrade() else {
+                return;
+            };
+            let Some(&minutes) = usize::try_from(index)
+                .ok()
+                .and_then(|index| IN_CALL_REFRESH_CHOICES.get(index))
+            else {
+                return;
+            };
+            let mut state = state.borrow_mut();
+            state.settings.in_call_refresh_minutes = minutes;
+            persist_settings(&mut state);
+            refresh_view(&ui, &state);
+        });
+    }
+    {
+        let state = state.clone();
+        let ui_weak = ui_weak.clone();
         window.on_settings_requested(move |visible| {
             let Some(ui) = ui_weak.upgrade() else {
                 return;
@@ -744,6 +811,11 @@ fn bind_callbacks(
             .is_none_or(|at| at.elapsed() >= REMINDER_CHECK_INTERVAL)
         {
             check_meeting_reminders(&mut state, &sender_for_timer, Local::now().fixed_offset());
+            refresh_meetings_during_call(
+                &mut state,
+                &sender_for_timer,
+                Local::now().fixed_offset(),
+            );
         }
         let _keep_tray_alive = &tray;
         if hotkeys
@@ -798,10 +870,35 @@ fn check_meeting_reminders(
         .flatten()
         .into_iter()
         .collect::<Vec<_>>();
-    let due = state
-        .reminders
-        .tracker
-        .due(now, delay, &state.reminders.history, &noted);
+    // Only meetings the user was in a call for are reminded, and never during a call or while
+    // that is unknown, such as a meeting that runs over its scheduled end.
+    let call = state.reminders.call_probe.map(|probe| probe());
+    let defer = call.is_some_and(|in_call| in_call != Some(false));
+    state.reminders.blocked.store(defer, Ordering::Relaxed);
+    let in_call = call.flatten() == Some(true);
+    let call_started = in_call && state.reminders.history.record_call(now);
+    let call_ended = state.reminders.in_call && call == Some(Some(false));
+    let call_save_due = in_call
+        && state
+            .reminders
+            .call_saved
+            .is_none_or(|at| at.elapsed() >= CALL_SAVE_INTERVAL);
+    if call.flatten().is_some() {
+        state.reminders.in_call = in_call;
+    }
+    if call_started || call_ended || call_save_due {
+        state.reminders.history.prune(now);
+        save_reminder_history(state);
+        state.reminders.call_saved = in_call.then(Instant::now);
+    }
+    let due = if defer {
+        Vec::new()
+    } else {
+        state
+            .reminders
+            .tracker
+            .due(now, delay, &state.reminders.history, &noted)
+    };
     for meeting in due {
         let key = state.reminders.history.begin(&meeting);
         let job = ReminderJob {
@@ -809,6 +906,7 @@ fn check_meeting_reminders(
             key: key.clone(),
             notes_root: state.settings.destination_root.clone(),
             enabled: state.reminders.enabled.clone(),
+            blocked: state.reminders.blocked.clone(),
         };
         let sent = state
             .reminders
@@ -837,6 +935,30 @@ fn check_meeting_reminders(
     }
 }
 
+/// Looks up meetings every few minutes while one is in progress and the capture window is
+/// open, so the list's "Transcribed" marker follows the call. Shares the reminders' lookup
+/// clock, so the two never double up and a failing lookup is not retried in a tight loop.
+fn refresh_meetings_during_call(
+    state: &mut AppState,
+    sender: &Sender<AppEvent>,
+    now: DateTime<FixedOffset>,
+) {
+    if in_call_lookup_due(state, now) {
+        state.reminders.last_lookup = Some(Instant::now());
+        start_meeting_lookup_state(state, sender, true);
+    }
+}
+
+fn in_call_lookup_due(state: &AppState, now: DateTime<FixedOffset>) -> bool {
+    let minutes = state.settings.in_call_refresh_minutes;
+    if minutes == 0 || !state.capture_open || meetings_in_progress(&state.meetings, now) == 0 {
+        return false;
+    }
+    let interval = Duration::from_secs(u64::from(minutes) * 60);
+    let latest = state.reminders.last_lookup.max(state.last_meeting_refresh);
+    latest.is_none_or(|at| at.elapsed() >= interval)
+}
+
 /// Saves a reminder as shown once Windows confirms it, so a failed attempt is retried at the
 /// next check instead of being lost.
 fn apply_reminder_outcome(
@@ -849,14 +971,18 @@ fn apply_reminder_outcome(
         ReminderOutcome::Delivered => {
             state.reminders.history.delivered(key, now);
             state.reminders.history.prune(now);
-            if let Some(path) = state.reminders.history_path.as_ref()
-                && state.reminders.history.save(path).is_err()
-            {
-                tracing::warn!(failure_class = "reminder_history_save_failed");
-            }
+            save_reminder_history(state);
         }
         ReminderOutcome::Failed => state.reminders.history.failed(key),
         ReminderOutcome::Cancelled => state.reminders.history.cancelled(key),
+    }
+}
+
+fn save_reminder_history(state: &AppState) {
+    if let Some(path) = state.reminders.history_path.as_ref()
+        && state.reminders.history.save(path).is_err()
+    {
+        tracing::warn!(failure_class = "reminder_history_save_failed");
     }
 }
 
@@ -1521,7 +1647,10 @@ fn update_meeting_view(window: &MainWindow, state: &mut AppState, now: DateTime<
             .position(|meeting| same_occurrence(meeting, attached))
         {
             Some(position) => {
-                choices[position] = attached.clone();
+                // Show the attached meeting, with the transcript status from the latest lookup.
+                let mut shown = attached.clone();
+                shown.has_transcript = choices[position].has_transcript.or(shown.has_transcript);
+                choices[position] = shown;
                 position + 1
             }
             None => {
@@ -1597,6 +1726,10 @@ fn refresh_view(window: &MainWindow, state: &AppState) {
     window.set_destination_label(state.settings.destination_root.display().to_string().into());
     window.set_auto_connect(state.settings.auto_connect_meeting);
     window.set_meeting_reminders(state.settings.meeting_reminders_enabled);
+    window.set_in_call_reminders(state.settings.in_call_reminders_enabled);
+    window.set_in_call_refresh_index(in_call_refresh_index(
+        state.settings.in_call_refresh_minutes,
+    ));
     window.set_hotkey_enabled(state.settings.hotkey_enabled);
     window.set_has_note(state.capture.capture.path.is_some());
     window.set_saved(!state.capture.is_dirty());
@@ -2626,6 +2759,27 @@ mod tests {
     }
 
     #[test]
+    fn a_chosen_meeting_shows_a_transcript_reported_by_a_later_lookup() {
+        let (window, mut state, now) = cached_window();
+        choose_meeting(&window, &mut state, 1, now);
+        let current_row = |window: &MainWindow| window.get_meeting_rows().row_data(1).unwrap();
+        assert!(!current_row(&window).transcribed);
+
+        let mut refreshed = state.meetings[1].clone();
+        refreshed.has_transcript = Some(true);
+        state.lookup_pending = true;
+        process_meeting_result(&window, &mut state, Ok(vec![refreshed]), Instant::now());
+        let row = current_row(&window);
+        assert!(row.transcribed);
+        assert!(row.label.ends_with(" · Transcribed"));
+        assert_eq!(window.get_meeting_index(), 1);
+        assert_eq!(
+            state.capture.capture.meeting_decision,
+            MeetingDecision::Selected
+        );
+    }
+
+    #[test]
     fn an_empty_note_snaps_to_a_meeting_once_it_starts() {
         let now = Local::now().fixed_offset();
         let (window, mut state) = window_with(vec![meeting_at("standup", now, 5, 35)], now);
@@ -2885,10 +3039,93 @@ mod tests {
             .reminders
             .tracker
             .observe(std::slice::from_ref(&ended), now);
+        state
+            .reminders
+            .history
+            .record_call(ended.start.unwrap() + TimeDelta::minutes(1));
         state.reminders.last_lookup = Some(Instant::now());
         let (notifier, jobs) = mpsc::channel();
         state.reminders.notifier = Some(notifier);
         (window, state, ended, jobs)
+    }
+
+    #[test]
+    fn only_joined_meetings_are_reminded_and_never_during_a_call() {
+        let now = Local::now().fixed_offset();
+        let skipped = meeting_at("skipped", now, -50, -20);
+        let current = meeting_at("current", now, -10, 20);
+        let (_window, mut state) = window_with(vec![skipped.clone(), current.clone()], now);
+        // No note is open, so the current meeting does not count as noted.
+        state.capture_open = false;
+        state
+            .reminders
+            .tracker
+            .observe(&[skipped, current.clone()], now);
+        state.reminders.last_lookup = Some(Instant::now());
+        let (notifier, jobs) = mpsc::channel();
+        state.reminders.notifier = Some(notifier);
+        let (sender, _events) = mpsc::channel();
+
+        state.reminders.call_probe = Some(|| Some(false));
+        check_meeting_reminders(&mut state, &sender, now);
+        assert!(
+            jobs.try_recv().is_err(),
+            "the user never joined the earlier meeting"
+        );
+
+        state.reminders.call_probe = Some(|| Some(true));
+        check_meeting_reminders(&mut state, &sender, now);
+        assert!(state.reminders.history.attended(&current));
+
+        // The call runs past the meeting's end: no reminder while it lasts or is unknown.
+        let after = now + TimeDelta::minutes(30);
+        state.reminders.tracker.observe(&[], after);
+        check_meeting_reminders(&mut state, &sender, after);
+        assert!(jobs.try_recv().is_err(), "deferred while still in a call");
+        state.reminders.call_probe = Some(|| None);
+        check_meeting_reminders(&mut state, &sender, after);
+        assert!(
+            jobs.try_recv().is_err(),
+            "deferred while the call state is unknown"
+        );
+
+        state.reminders.call_probe = Some(|| Some(false));
+        check_meeting_reminders(&mut state, &sender, after);
+        let job = jobs.try_recv().unwrap();
+        assert_eq!(job.meeting.id, "current");
+        assert!(!job.blocked.load(Ordering::Relaxed));
+
+        // A call that starts while the reminder is queued holds it back.
+        state.reminders.call_probe = Some(|| Some(true));
+        check_meeting_reminders(&mut state, &sender, after);
+        assert!(
+            job.blocked.load(Ordering::Relaxed),
+            "the queued job sees it"
+        );
+    }
+
+    #[test]
+    fn a_call_in_progress_is_saved_every_few_minutes() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("meeting-reminders.json");
+        let now = Local::now().fixed_offset();
+        let (_window, mut state) = window_with(Vec::new(), now);
+        state.reminders.history_path = Some(path.clone());
+        state.reminders.call_probe = Some(|| Some(true));
+        let (sender, _events) = mpsc::channel();
+
+        check_meeting_reminders(&mut state, &sender, now);
+        let later = now + TimeDelta::minutes(1);
+        check_meeting_reminders(&mut state, &sender, later);
+        assert_eq!(
+            ReminderHistory::load(&path).calls[0].end,
+            now,
+            "not saved on every check"
+        );
+
+        state.reminders.call_saved = Instant::now().checked_sub(CALL_SAVE_INTERVAL);
+        check_meeting_reminders(&mut state, &sender, later);
+        assert_eq!(ReminderHistory::load(&path).calls[0].end, later);
     }
 
     #[test]
@@ -2930,6 +3167,74 @@ mod tests {
         check_meeting_reminders(&mut state, &sender, now);
         assert!(jobs.try_recv().is_err(), "gives up after the last attempt");
         assert!(state.reminders.history.reminders.is_empty());
+    }
+
+    #[test]
+    fn meetings_are_looked_up_every_few_minutes_during_a_call_while_the_window_is_open() {
+        let now = Local::now().fixed_offset();
+        let (_window, mut state) = window_with(vec![meeting_at("current", now, -10, 20)], now);
+        assert!(!in_call_lookup_due(&state, now), "a fresh list is reused");
+
+        let minutes = state.settings.in_call_refresh_minutes;
+        let stale = Instant::now()
+            .checked_sub(Duration::from_secs(u64::from(minutes) * 60))
+            .unwrap();
+        state.last_meeting_refresh = Some(stale);
+        assert!(in_call_lookup_due(&state, now));
+        state.settings.in_call_refresh_minutes = minutes + 5;
+        assert!(!in_call_lookup_due(&state, now), "a longer interval waits");
+        state.settings.in_call_refresh_minutes = 0;
+        assert!(!in_call_lookup_due(&state, now), "Off never checks");
+        state.settings.in_call_refresh_minutes = minutes;
+        assert!(
+            !in_call_lookup_due(&state, now + chrono::TimeDelta::minutes(30)),
+            "not once the call has ended"
+        );
+        state.capture_open = false;
+        assert!(
+            !in_call_lookup_due(&state, now),
+            "not while the window is closed"
+        );
+
+        state.capture_open = true;
+        state.reminders.last_lookup = Some(Instant::now());
+        assert!(
+            !in_call_lookup_due(&state, now),
+            "a lookup that just started, even if it fails, is not repeated"
+        );
+    }
+
+    #[test]
+    fn the_in_call_interval_setting_maps_to_its_choice_and_back() {
+        assert_eq!(in_call_refresh_index(5), 0);
+        assert_eq!(in_call_refresh_index(10), 1);
+        assert_eq!(
+            in_call_refresh_index(7),
+            1,
+            "snaps to the next longer choice"
+        );
+        assert_eq!(in_call_refresh_index(90), 3);
+        assert_eq!(in_call_refresh_index(0), 4);
+
+        let now = Local::now().fixed_offset();
+        let (window, mut state) = window_with(Vec::new(), now);
+        state.settings.in_call_refresh_minutes = 15;
+        state.settings.in_call_reminders_enabled = false;
+        refresh_view(&window, &state);
+        assert_eq!(window.get_in_call_refresh_index(), 2);
+        assert!(!window.get_in_call_reminders());
+    }
+
+    #[test]
+    fn transcribed_meetings_are_marked_in_the_list() {
+        let now = Local::now().fixed_offset();
+        let mut meeting = meeting_at("current", now, -10, 20);
+        meeting.has_transcript = Some(true);
+        let row = meeting_row(&meeting, now);
+        assert!(row.now && row.transcribed);
+        assert!(row.label.ends_with(" · Transcribed"));
+        meeting.has_transcript = None;
+        assert!(!meeting_row(&meeting, now).transcribed);
     }
 
     #[test]

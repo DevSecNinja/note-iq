@@ -105,7 +105,8 @@ unpin it and pin the rebuilt executable again.
 The window has no header or **Save** button. A single line under the note shows
 the save status, such as `Saved · 14:41`, and turns red only for problems. The
 meeting list shows the selected meeting or **No meeting**, with a green **Now**
-tag while that meeting is in progress. A hint below it appears only when meeting
+tag while that meeting is in progress and a purple **Transcribed** tag when
+Teams reports a transcript for it. A hint below it appears only when meeting
 lookup has a problem; while a lookup runs, the list itself says **Checking your
 calendar…**.
 
@@ -470,7 +471,7 @@ The **Meeting** list at the top of the note shows which meeting is attached. Its
 first entry is always **No meeting**; the others are retrieved meetings, each
 on two lines. The start time sits in a column on the left, the title on the
 first line is shortened with "…" when it does not fit, and the second line adds
-details such as **Now**, `ends 15:00`, `In 1 h 20 min`, `Ended 10:00`, or the
+details such as **Now**, **Transcribed**, `ends 15:00`, `In 1 h 20 min`, `Ended 10:00`, or the
 day for other dates, followed by the length, **Tentative** when you replied
 tentatively, the organizer, and the number of people invited. Earlier meetings are
 shown in grey. Screen readers hear the title, date, and time, for example
@@ -565,7 +566,17 @@ in Notification Center until dismissed.
   lookup that starts after the delay, so a transcript that appears shortly
   after the meeting ends still counts.
 - WorkIQ reports `isTranscriptAvailable` for Teams meetings. When it does not
-  say, for example for in-person meetings, NoteIQ still suggests a note.
+  say, NoteIQ still suggests a note.
+- Only meetings you were in a Teams call for on this PC are suggested. While a
+  meeting is in progress, NoteIQ checks every 30 seconds whether Teams is using
+  a microphone; Teams keeps it open for the whole call, even while you are
+  muted or joined with **Don't use audio**, as in a meeting room. Calls joined
+  in a browser or on another device, and in-person meetings, are not detected.
+  When meetings overlap, all of them count as joined. Reminders wait until you
+  leave the call, for example when a meeting runs over, and while NoteIQ cannot
+  tell whether you are in one. The two-hour limit then counts from the end of
+  the call. Calls are kept for a day in `meeting-reminders.json`, so a restart
+  does not lose them.
 - There is no reminder for cancelled, declined, or all-day meetings; for
   calendar blocks you organized with nobody invited, such as lunch; for the
   meeting connected to the open note; for meetings that already have a saved
@@ -578,6 +589,15 @@ in Notification Center until dismissed.
 While reminders are on, NoteIQ looks up meetings in the background every 30
 minutes, and every 2 minutes while a reminder waits for a fresh transcript
 status. Turning the setting off stops reminders and these lookups at once.
+Separately, while a meeting is in progress and the capture window is open,
+NoteIQ looks up meetings so the **Transcribed** tag follows the call. Choose
+how often with **Check meetings during calls** in **Settings**: every 5, 10
+(the default), 15, or 30 minutes, or **Off**. Each check starts WorkIQ and
+searches your calendar, so shorter intervals cost more lookups.
+
+**Remind me when a call I joined isn't transcribed** controls a reminder during
+calls. It is saved now and takes effect once that reminder ships
+([#26](https://github.com/DevSecNinja/note-iq/issues/26)).
 
 NoteIQ is not a packaged app, so it registers the notification sender under
 `HKCU\Software\Classes\AppUserModelId\DevSecNinja.NoteIQ` with its name and

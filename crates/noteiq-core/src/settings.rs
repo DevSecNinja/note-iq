@@ -34,6 +34,10 @@ pub struct Settings {
     pub meeting_reminders_enabled: bool,
     /// Minutes to wait after a meeting ends before suggesting a note.
     pub meeting_reminder_delay_minutes: u32,
+    /// Remind the user during a call they joined that it isn't being transcribed.
+    pub in_call_reminders_enabled: bool,
+    /// Minutes between meeting lookups while a meeting is in progress; 0 turns them off.
+    pub in_call_refresh_minutes: u32,
     /// Insert a template into empty notes that are connected to a meeting.
     pub meeting_templates_enabled: bool,
     /// Identifier of the template applied to new meeting notes.
@@ -57,6 +61,8 @@ impl Settings {
             note_filename: DEFAULT_NOTE_FILENAME.to_owned(),
             meeting_reminders_enabled: true,
             meeting_reminder_delay_minutes: 5,
+            in_call_reminders_enabled: true,
+            in_call_refresh_minutes: 10,
             meeting_templates_enabled: false,
             default_meeting_template: "general".to_owned(),
         }
