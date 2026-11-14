@@ -11,4 +11,5 @@ pub mod model;
 pub mod note_filename;
 pub mod saved_note;
 pub mod settings;
+pub mod tidy;
 pub mod workiq;
