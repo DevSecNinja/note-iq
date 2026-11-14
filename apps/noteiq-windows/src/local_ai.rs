@@ -13,7 +13,8 @@ use std::{
 use windows_core::{HRESULT, HSTRING};
 use windows_future::AsyncStatus;
 
-/// A tidy-up that runs longer than this is cancelled; short notes took about 5 seconds.
+/// Loading the model and rewriting together may take this long before being cancelled;
+/// short notes took about 5 seconds.
 pub const REWRITE_TIMEOUT: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const CLASS_NOT_REGISTERED: HRESULT = HRESULT(0x8004_0154_u32 as i32);
@@ -88,25 +89,27 @@ pub fn rewrite(text: &str, cancel: &AtomicBool) -> Result<String, RewriteFailure
         tracing::warn!(code = ?error.code(), "On-device tidy up failed");
         RewriteFailure::Failed("The on-device AI model couldn't tidy this note.".to_owned())
     };
-    let model = LanguageModel::CreateAsync()
-        .and_then(|operation| operation.join())
-        .map_err(failed)?;
+    let deadline = Instant::now() + REWRITE_TIMEOUT;
+    let creation = LanguageModel::CreateAsync().map_err(failed)?;
+    match wait(|| creation.Status(), || creation.Cancel(), cancel, deadline).map_err(failed)? {
+        Waited::Done => {}
+        stopped => return Err(stopped.failure()),
+    }
+    let model = creation.GetResults().map_err(failed)?;
     let result = (|| {
+        if cancel.load(Ordering::Relaxed) {
+            return Ok(Err(RewriteFailure::Cancelled));
+        }
         let rewriter = TextRewriter::CreateInstance(&model)?;
         let operation = rewriter.RewriteAsync2(&HSTRING::from(text), TextRewriteTone::Concise)?;
-        let started = Instant::now();
-        while operation.Status()? == AsyncStatus::Started {
-            if cancel.load(Ordering::Relaxed) {
-                operation.Cancel()?;
-                return Ok(Err(RewriteFailure::Cancelled));
-            }
-            if started.elapsed() >= REWRITE_TIMEOUT {
-                operation.Cancel()?;
-                return Ok(Err(RewriteFailure::Failed(
-                    "The on-device AI model took too long. Try again later.".to_owned(),
-                )));
-            }
-            std::thread::sleep(POLL_INTERVAL);
+        match wait(
+            || operation.Status(),
+            || operation.Cancel(),
+            cancel,
+            deadline,
+        )? {
+            Waited::Done => {}
+            stopped => return Ok(Err(stopped.failure())),
         }
         let response = operation.GetResults()?;
         let status = response.Status()?;
@@ -120,6 +123,46 @@ pub fn rewrite(text: &str, cancel: &AtomicBool) -> Result<String, RewriteFailure
     .and_then(|outcome| outcome);
     let _ = model.Close();
     result
+}
+
+enum Waited {
+    Done,
+    Cancelled,
+    TimedOut,
+}
+
+impl Waited {
+    fn failure(self) -> RewriteFailure {
+        match self {
+            Self::TimedOut => RewriteFailure::Failed(
+                "The on-device AI model took too long. Try again later.".to_owned(),
+            ),
+            _ => RewriteFailure::Cancelled,
+        }
+    }
+}
+
+/// Polls an async operation until it ends, cancelling it when `cancel` is set or the shared
+/// deadline for loading the model and rewriting passes.
+fn wait(
+    status: impl Fn() -> windows_core::Result<AsyncStatus>,
+    stop: impl Fn() -> windows_core::Result<()>,
+    cancel: &AtomicBool,
+    deadline: Instant,
+) -> windows_core::Result<Waited> {
+    while status()? == AsyncStatus::Started {
+        let outcome = if cancel.load(Ordering::Relaxed) {
+            Waited::Cancelled
+        } else if Instant::now() >= deadline {
+            Waited::TimedOut
+        } else {
+            std::thread::sleep(POLL_INTERVAL);
+            continue;
+        };
+        stop()?;
+        return Ok(outcome);
+    }
+    Ok(Waited::Done)
 }
 
 fn response_message(status: LanguageModelResponseStatus) -> &'static str {

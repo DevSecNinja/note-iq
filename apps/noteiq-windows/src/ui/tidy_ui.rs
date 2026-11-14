@@ -59,6 +59,8 @@ struct Undo {
     original: String,
     applied: String,
     was_tidied: bool,
+    /// Set by the first edit after Apply; text that returns to `applied` stays edited.
+    edited: bool,
 }
 
 /// A rewrite for the background worker.
@@ -279,12 +281,26 @@ fn show_preview(window: &MainWindow, original: &str, suggestion: &str) {
         StyledText::from_plain_text(suggestion)
     });
     window.set_tidy_diff(diff);
-    let warnings = fact_warnings(original, suggestion)
+    let all = fact_warnings(original, suggestion);
+    let mut warnings = all
         .iter()
+        .take(MAX_WARNINGS)
         .map(|warning| SharedString::from(warning.message()))
         .collect::<Vec<_>>();
+    if all.len() > MAX_WARNINGS {
+        warnings.push(
+            format!(
+                "{} more changes to check in the highlighted text.",
+                all.len() - MAX_WARNINGS
+            )
+            .into(),
+        );
+    }
     window.set_tidy_warnings(ModelRc::new(VecModel::from(warnings)));
 }
+
+/// More warnings than this are summarized; the diff shows every change anyway.
+const MAX_WARNINGS: usize = 6;
 
 fn apply(window: &MainWindow, state: &mut AppState) {
     let Some(preview) = state.tidy.preview.take() else {
@@ -301,6 +317,7 @@ fn apply(window: &MainWindow, state: &mut AppState) {
         original: preview.original,
         applied: preview.suggestion.clone(),
         was_tidied: state.capture.capture.ai_tidied,
+        edited: false,
     });
     state.capture.capture.ai_tidied = true;
     state
@@ -320,8 +337,12 @@ fn discard(window: &MainWindow, state: &mut AppState) {
     refresh_view(window, state);
 }
 
-/// Restores the note from before the tidy-up, discarding any edits made since.
+/// Restores the note from before the tidy-up, discarding any edits made since. Not while
+/// another tidy-up of the note is running or under review.
 fn undo(window: &MainWindow, state: &mut AppState) {
+    if busy(state) {
+        return;
+    }
     let Some(undo) = state.tidy.undo.take() else {
         return;
     };
@@ -337,6 +358,34 @@ fn undo(window: &MainWindow, state: &mut AppState) {
     refresh_view(window, state);
 }
 
+/// The user typed in the note: Ctrl+Z goes back to the editor's own undo from now on.
+pub(super) fn note_edited(state: &mut AppState) {
+    let id = capture_id(state);
+    if let Some(undo) = state
+        .tidy
+        .undo
+        .as_mut()
+        .filter(|undo| undo.capture_id == id)
+    {
+        undo.edited = true;
+    }
+}
+
+/// A tidy-up of the open note is running or waiting for review.
+fn busy(state: &AppState) -> bool {
+    let id = capture_id(state);
+    state
+        .tidy
+        .running
+        .as_ref()
+        .is_some_and(|r| r.capture_id == id)
+        || state
+            .tidy
+            .preview
+            .as_ref()
+            .is_some_and(|p| p.capture_id == id)
+}
+
 pub(super) fn refresh(window: &MainWindow, state: &AppState) {
     let id = capture_id(state);
     let tidy = &state.tidy;
@@ -349,8 +398,11 @@ pub(super) fn refresh(window: &MainWindow, state: &AppState) {
     window.set_tidy_availability_text(tidy.availability.description().into());
     window.set_tidy_running(tidy.running.as_ref().is_some_and(|r| r.capture_id == id));
     window.set_tidy_preview_visible(tidy.preview.as_ref().is_some_and(|p| p.capture_id == id));
-    let undo = tidy.undo.as_ref().filter(|undo| undo.capture_id == id);
-    let armed = undo.is_some_and(|undo| state.capture.capture.body == undo.applied);
+    let undo = tidy
+        .undo
+        .as_ref()
+        .filter(|undo| undo.capture_id == id && !busy(state));
+    let armed = undo.is_some_and(|undo| !undo.edited && state.capture.capture.body == undo.applied);
     window.set_tidy_undo_available(undo.is_some());
     window.set_tidy_undo_armed(armed);
     window.set_tidy_undo_label(
@@ -389,6 +441,7 @@ mod tests {
 
     fn type_text(window: &MainWindow, state: &mut AppState, text: &str) {
         state.capture.edit(text.to_owned(), Instant::now());
+        note_edited(state);
         window.set_note_text(text.into());
         refresh_view(window, state);
     }
@@ -506,8 +559,60 @@ mod tests {
             window.get_tidy_undo_label(),
             "Restore note from before tidy-up"
         );
+        // Deleting the typed text again must not re-arm Ctrl+Z over the editor's own undo.
+        type_text(&window, &mut state, TIDIED);
+        assert!(!window.get_tidy_undo_armed());
         undo(&window, &mut state);
         assert_eq!(state.capture.capture.body, ROUGH);
+    }
+
+    #[test]
+    fn undo_waits_while_another_tidy_up_runs_or_is_reviewed() {
+        let folder = tempfile::tempdir().unwrap();
+        let (window, mut state) = ready_window(folder.path());
+        type_text(&window, &mut state, ROUGH);
+        let job = start(&window, &mut state).unwrap();
+        finish(&window, &mut state, job.generation, Ok(TIDIED.into()));
+        apply(&window, &mut state);
+
+        let job = start(&window, &mut state).unwrap();
+        assert!(!window.get_tidy_undo_available());
+        assert!(!window.get_tidy_undo_armed());
+        undo(&window, &mut state);
+        assert_eq!(state.capture.capture.body, TIDIED, "ignored while running");
+        finish(
+            &window,
+            &mut state,
+            job.generation,
+            Ok(format!("{TIDIED} Done.")),
+        );
+        assert!(window.get_tidy_preview_visible());
+        undo(&window, &mut state);
+        assert_eq!(state.capture.capture.body, TIDIED, "ignored under review");
+        discard(&window, &mut state);
+        assert!(window.get_tidy_undo_armed());
+        undo(&window, &mut state);
+        assert_eq!(state.capture.capture.body, ROUGH);
+    }
+
+    #[test]
+    fn many_warnings_are_summarized() {
+        let folder = tempfile::tempdir().unwrap();
+        let (window, mut state) = ready_window(folder.path());
+        type_text(&window, &mut state, "costs 1 2 3 4 5 6 7 8 9");
+        let job = start(&window, &mut state).unwrap();
+        finish(
+            &window,
+            &mut state,
+            job.generation,
+            Ok("Costs 11 12 13 14 15 16 17 18 19.".into()),
+        );
+        let shown = warnings(&window);
+        assert_eq!(shown.len(), MAX_WARNINGS + 1);
+        assert_eq!(
+            shown.last().unwrap(),
+            "12 more changes to check in the highlighted text."
+        );
     }
 
     #[test]

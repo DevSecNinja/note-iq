@@ -397,6 +397,7 @@ fn bind_callbacks(
         window.on_body_changed(move |text| {
             let mut state = state.borrow_mut();
             state.capture.edit(String::from(text), Instant::now());
+            tidy_ui::note_edited(&mut state);
             state.status = "Unsaved changes".to_owned();
             if let Some(ui) = ui_weak.upgrade() {
                 ui.set_saved(false);

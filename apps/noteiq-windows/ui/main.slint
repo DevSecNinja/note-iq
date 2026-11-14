@@ -669,9 +669,11 @@ export component MainWindow inherits Window {
         forward-focus: note-editor;
 
         // Runs before the editor sees the key: the editor's own undo history cannot reach the
-        // text from before a tidy-up.
+        // text from before a tidy-up. Only plain Ctrl+Z in the note editor; Ctrl+Shift+Z redoes.
         capture-key-pressed(event) => {
-            if root.tidy-undo-armed && event.modifiers.control && (event.text == "z" || event.text == "Z") {
+            if root.tidy-undo-armed && note-editor.has-focus && event.modifiers.control
+                && !event.modifiers.shift && !event.modifiers.alt
+                && (event.text == "z" || event.text == "Z") {
                 root.tidy-undo-requested();
                 return accept;
             }
@@ -898,26 +900,6 @@ export component MainWindow inherits Window {
                             font-size: 12px;
                             wrap: word-wrap;
                         }
-                        if root.tidy-warnings.length > 0: Rectangle {
-                            background: #fef3c7;
-                            border-radius: 6px;
-                            VerticalLayout {
-                                padding: 8px;
-                                spacing: 2px;
-                                Text {
-                                    text: "Check before applying";
-                                    color: #92400e;
-                                    font-size: 12px;
-                                    font-weight: 600;
-                                }
-                                for warning in root.tidy-warnings: Text {
-                                    text: "• " + warning;
-                                    color: #92400e;
-                                    font-size: 12px;
-                                    wrap: word-wrap;
-                                }
-                            }
-                        }
                         ScrollView {
                             vertical-stretch: 1;
                             min-height: 80px;
@@ -925,6 +907,28 @@ export component MainWindow inherits Window {
 
                             VerticalLayout {
                                 padding: 4px;
+                                spacing: 8px;
+                                // Scrolls with the changes, so Apply and Discard stay in view.
+                                if root.tidy-warnings.length > 0: Rectangle {
+                                    background: #fef3c7;
+                                    border-radius: 6px;
+                                    VerticalLayout {
+                                        padding: 8px;
+                                        spacing: 2px;
+                                        Text {
+                                            text: "Check before applying";
+                                            color: #92400e;
+                                            font-size: 12px;
+                                            font-weight: 600;
+                                        }
+                                        for warning in root.tidy-warnings: Text {
+                                            text: "• " + warning;
+                                            color: #92400e;
+                                            font-size: 12px;
+                                            wrap: word-wrap;
+                                        }
+                                    }
+                                }
                                 StyledText {
                                     text: root.tidy-diff;
                                     default-color: #20232a;

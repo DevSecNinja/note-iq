@@ -200,7 +200,53 @@ fn the_diff_renders_as_escaped_markdown_line_by_line() {
     }];
     assert_eq!(
         diff_markdown(&changes),
-        "\u{a0}<font color=\"#b91c1c\">~~gone  next~~</font>"
+        "\u{a0}<font color=\"#b91c1c\">~~gone ¶next~~</font>"
+    );
+}
+
+#[test]
+fn changed_whitespace_is_marked_and_unchanged_whitespace_shown_once() {
+    // Joining two list items removes only a line break, which must stay visible.
+    let joined = diff_markdown(&diff_words("- a\n- b", "- a - b"));
+    assert_eq!(
+        joined,
+        "\\- a<font color=\"#b91c1c\">~~¶~~</font><font color=\"#15803d\"><u>·</u></font>\\- b"
+    );
+    let indented = diff_markdown(&diff_words("a\nb", "a\n\tb"));
+    assert!(indented.contains("<u>→</u>"), "{indented}");
+    let blank_line = vec![Change {
+        kind: ChangeKind::Same,
+        text: "a\n   \nb".into(),
+    }];
+    assert_eq!(diff_markdown(&blank_line), "a\n\u{a0}\u{a0}\u{a0}\nb");
+}
+
+#[test]
+fn decimals_and_units_are_compared_as_written() {
+    assert_eq!(
+        fact_warnings("budget 1.5m, dose 5mg", "Budget 2m, dose 5mg."),
+        vec![
+            FactWarning::NumberRemoved("1.5m".into()),
+            FactWarning::NumberAdded("2m".into())
+        ]
+    );
+    assert_eq!(
+        fact_warnings("timeout 20ms", "Timeout 200ms."),
+        vec![
+            FactWarning::NumberRemoved("20ms".into()),
+            FactWarning::NumberAdded("200ms".into())
+        ]
+    );
+}
+
+#[test]
+fn removed_names_are_flagged_but_shortened_ones_are_not() {
+    assert_eq!(
+        fact_warnings(
+            "call with Alice and Bob on Friday",
+            "Call with Alice on Fri."
+        ),
+        vec![FactWarning::NameRemoved("Bob".into())]
     );
 }
 

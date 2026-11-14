@@ -187,10 +187,13 @@ fn group(steps: Vec<(ChangeKind, &str)>) -> Vec<Change> {
 
 const REMOVED_COLOR: &str = "#b91c1c";
 const ADDED_COLOR: &str = "#15803d";
+const LINE_BREAK_MARK: &str = "¶";
 
 /// Renders `changes` as the Markdown subset Slint's `StyledText` accepts: removals struck
 /// through in red, additions underlined in green. Every line of the note stays a line, and
-/// the note's own Markdown is escaped so it shows literally.
+/// the note's own Markdown is escaped so it shows literally. Changed whitespace that would
+/// otherwise look unchanged shows as marks: `·` for a space, `→` for a tab, `¶` for a line
+/// break.
 pub fn diff_markdown(changes: &[Change]) -> String {
     let mut output = String::new();
     let mut at_line_start = true;
@@ -205,9 +208,13 @@ pub fn diff_markdown(changes: &[Change]) -> String {
             output.push(' ');
         }
         previous = change.kind;
+        let whitespace_only = change.kind != ChangeKind::Same && change.text.trim().is_empty();
         let text = match change.kind {
-            // A removed line break would join two lines; a space keeps the words apart.
-            ChangeKind::Removed => change.text.replace('\n', " "),
+            // A removed line break stays on one line, so joined lines are visible.
+            ChangeKind::Removed => change.text.replace('\n', LINE_BREAK_MARK),
+            ChangeKind::Added if whitespace_only => {
+                change.text.replace('\n', &format!("{LINE_BREAK_MARK}\n"))
+            }
             _ => change.text.clone(),
         };
         for (index, line) in text.split('\n').enumerate() {
@@ -218,27 +225,46 @@ pub fn diff_markdown(changes: &[Change]) -> String {
             if line.is_empty() {
                 continue;
             }
+            if whitespace_only {
+                let marks: String = line
+                    .chars()
+                    .map(|c| match c {
+                        '\t' => '→',
+                        c if c.is_whitespace() => '·',
+                        c => c,
+                    })
+                    .collect();
+                push_styled(&mut output, change.kind, &marks);
+                at_line_start = false;
+                continue;
+            }
             let core = line.trim();
+            if core.is_empty() {
+                push_spaces(&mut output, line, at_line_start);
+                continue;
+            }
             let leading = &line[..line.len() - line.trim_start().len()];
             let trailing = &line[line.trim_end().len()..];
             push_spaces(&mut output, leading, at_line_start);
-            if !core.is_empty() {
-                let escaped = escape_markdown(core);
-                match change.kind {
-                    ChangeKind::Same => output.push_str(&escaped),
-                    ChangeKind::Removed => output.push_str(&format!(
-                        "<font color=\"{REMOVED_COLOR}\">~~{escaped}~~</font>"
-                    )),
-                    ChangeKind::Added => output.push_str(&format!(
-                        "<font color=\"{ADDED_COLOR}\"><u>{escaped}</u></font>"
-                    )),
-                }
-                at_line_start = false;
-            }
+            push_styled(&mut output, change.kind, core);
+            at_line_start = false;
             push_spaces(&mut output, trailing, at_line_start);
         }
     }
     output
+}
+
+fn push_styled(output: &mut String, kind: ChangeKind, text: &str) {
+    let escaped = escape_markdown(text);
+    match kind {
+        ChangeKind::Same => output.push_str(&escaped),
+        ChangeKind::Removed => output.push_str(&format!(
+            "<font color=\"{REMOVED_COLOR}\">~~{escaped}~~</font>"
+        )),
+        ChangeKind::Added => output.push_str(&format!(
+            "<font color=\"{ADDED_COLOR}\"><u>{escaped}</u></font>"
+        )),
+    }
 }
 
 /// Spaces at the start of a line would otherwise turn into Markdown indentation.
@@ -271,6 +297,7 @@ pub enum FactWarning {
     UncertaintyRemoved,
     FirstPersonRemoved,
     SymbolAdded(char),
+    NameRemoved(String),
     NameAdded(String),
     MuchShorter,
 }
@@ -292,6 +319,7 @@ impl FactWarning {
                 "The note may no longer say what you will do yourself (\"me\", \"I\").".to_owned()
             }
             Self::SymbolAdded(symbol) => format!("\"{symbol}\" was added."),
+            Self::NameRemoved(name) => format!("\"{name}\" is no longer in the note."),
             Self::NameAdded(name) => format!("\"{name}\" was added."),
             Self::MuchShorter => {
                 "The suggestion is less than half as long. Check that nothing important was dropped."
@@ -329,7 +357,8 @@ fn words(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Numbers keyed by value, so "2,000" matches "2000" and "40k" matches "40000". The value
+/// Numbers keyed by value, so "2,000" matches "2000" and "40k" matches "40000". Decimals and
+/// unit suffixes stay in the key, so "1.5m" differs from "2m" and "5mg" from "50mg". The value
 /// maps to the form shown in the note.
 fn numbers(text: &str) -> Vec<(String, String)> {
     let characters: Vec<char> = text.chars().collect();
@@ -364,8 +393,9 @@ fn numbers(text: &str) -> Vec<(String, String)> {
         let value = match suffix.as_str() {
             "" | "st" | "nd" | "rd" | "th" => Some(digits),
             "k" if !digits.contains('.') => Some(format!("{digits}000")),
-            "m" if !digits.contains('.') => Some(format!("{digits}000000")),
-            // Part of a name such as "x64" or "Q4", which the name check covers.
+            // Units and scales such as "1.5m", "5mg", "20ms", or "3pm".
+            _ if suffix.chars().count() <= 3 => Some(format!("{digits}{suffix}")),
+            // Digits glued to a longer word are not a quantity.
             _ => None,
         };
         if let Some(value) = value {
@@ -478,13 +508,24 @@ pub fn fact_warnings(before: &str, after: &str) -> Vec<FactWarning> {
     }
 
     let known: BTreeSet<&str> = before_words.iter().map(String::as_str).collect();
+    let kept: BTreeSet<&str> = after_words.iter().map(String::as_str).collect();
     let mut named = BTreeSet::new();
+    for name in names(before) {
+        let lower = name.to_lowercase();
+        // "Fri" becoming "Friday", or the reverse, still names the same thing.
+        let shortened_or_expanded = kept.iter().any(|word| {
+            word.chars().count() >= 3 && (lower.starts_with(word) || word.starts_with(&lower))
+        });
+        if !kept.contains(lower.as_str()) && !shortened_or_expanded && named.insert(lower) {
+            warnings.push(FactWarning::NameRemoved(name));
+        }
+    }
     for name in names(&after) {
         let lower = name.to_lowercase();
         // "fri" becoming "Friday" or "q1" becoming "Q1" is an expansion, not a new name.
-        let expanded = known
-            .iter()
-            .any(|word| word.chars().count() >= 3 && lower.starts_with(word));
+        let expanded = known.iter().any(|word| {
+            word.chars().count() >= 3 && (lower.starts_with(word) || word.starts_with(&lower))
+        });
         if !known.contains(lower.as_str()) && !expanded && named.insert(lower) {
             warnings.push(FactWarning::NameAdded(name));
         }

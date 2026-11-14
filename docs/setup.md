@@ -346,7 +346,8 @@ Selecting the **Tidy up** toolbar button never changes the note directly:
 1. While the model runs (about 5 seconds), the note is read-only and **Cancel**
    stops it.
 2. A review panel shows every change: removed text struck through in red, added
-   text underlined in green. **Check before applying** lists changes that may
+   text underlined in green. Changed spaces, tabs, and line breaks show as `·`,
+   `→`, and `¶`. **Check before applying** lists changes that may
    alter facts: numbers or names that were added or removed, a lost or added
    "not", hedges such as "??" or "maybe" that now read as certain, a lost "me"
    or "I", added symbols such as "$", or a much shorter result. These checks do
