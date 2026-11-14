@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/DevSecNinja/note-iq/compare/v0.3.0...v0.4.0) (2026-11-12)
+
+
+### Features
+
+* suggest a note after untranscribed meetings and add meeting templates ([#25](https://github.com/DevSecNinja/note-iq/issues/25)) ([464fdbc](https://github.com/DevSecNinja/note-iq/commit/464fdbcec30e6a0ff79a0d210303413294f73d43))
+
 ## [0.3.0](https://github.com/DevSecNinja/note-iq/compare/v0.2.2...v0.3.0) (2026-11-10)
 
 
