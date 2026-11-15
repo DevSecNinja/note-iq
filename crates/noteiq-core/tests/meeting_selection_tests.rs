@@ -201,6 +201,9 @@ fn list_entries_show_time_title_and_details_for_each_state() {
         )
     );
     assert!(entry.now && !entry.past);
+    assert!(!entry.transcribed, "an unknown transcript is not shown");
+    current.has_transcript = Some(true);
+    assert!(list_entry(&current, instant()).transcribed);
 
     let ended = list_entry(&timed("ended", "09:00", "10:00"), instant());
     assert_eq!(ended.details, "Ended 10:00 · Organizer · 1 person");
