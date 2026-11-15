@@ -578,6 +578,9 @@ fn bind_callbacks(
             let mut state = state.borrow_mut();
             state.settings.meeting_reminders_enabled = enabled;
             state.reminders.enabled.store(enabled, Ordering::Relaxed);
+            if !enabled {
+                state.reminders.in_call = false;
+            }
             persist_settings(&mut state);
             refresh_view(&ui, &state);
         });
@@ -887,6 +890,8 @@ fn check_meeting_reminders(
         .enabled
         .store(state.settings.meeting_reminders_enabled, Ordering::Relaxed);
     if !state.settings.meeting_reminders_enabled {
+        // Calls are not followed while reminders are off, so the next call seen is new.
+        state.reminders.in_call = false;
         return;
     }
     let delay = reminder_delay(state.settings.meeting_reminder_delay_minutes);
@@ -3131,6 +3136,27 @@ mod tests {
         assert!(
             job.blocked.load(Ordering::Relaxed),
             "the queued job sees it"
+        );
+    }
+
+    #[test]
+    fn calls_seen_before_and_after_reminders_were_off_are_separate() {
+        let now = Local::now().fixed_offset();
+        let (_window, mut state) = window_with(Vec::new(), now);
+        state.reminders.call_probe = Some(|| Some(true));
+        let (sender, _events) = mpsc::channel();
+
+        check_meeting_reminders(&mut state, &sender, now);
+        state.settings.meeting_reminders_enabled = false;
+        check_meeting_reminders(&mut state, &sender, now + TimeDelta::minutes(1));
+        assert!(!state.reminders.in_call);
+
+        state.settings.meeting_reminders_enabled = true;
+        check_meeting_reminders(&mut state, &sender, now + TimeDelta::hours(2));
+        assert_eq!(
+            state.reminders.history.calls.len(),
+            2,
+            "the gap while reminders were off is not bridged"
         );
     }
 
