@@ -362,7 +362,10 @@ Selecting the **Tidy up** toolbar button never changes the note directly:
    OneDrive version history.
 
 Only notes up to 700 characters can be tidied: in testing, longer notes were
-more likely to have facts merged or changed. Windows may add an invisible
+more likely to have facts merged or changed. Windows detects the note's language
+itself and can reject very short lowercase notes full of abbreviations, such as
+"deal alm closed", even when they are English; capitalizing names and acronyms or
+writing a full sentence usually helps. Windows may add an invisible
 AI-generated text marker (`U+200B U+034F U+2060 U+200B`) to the result; NoteIQ
 keeps it and ignores it when comparing.
 
