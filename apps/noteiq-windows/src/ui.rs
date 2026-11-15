@@ -99,6 +99,14 @@ fn in_call_refresh_index(minutes: u32) -> i32 {
     };
     i32::try_from(index).unwrap_or_default()
 }
+
+/// The interval actually used, which is always the choice shown in Settings.
+fn effective_in_call_refresh_minutes(minutes: u32) -> u32 {
+    usize::try_from(in_call_refresh_index(minutes))
+        .ok()
+        .and_then(|index| IN_CALL_REFRESH_CHOICES.get(index).copied())
+        .unwrap_or(0)
+}
 const NO_MEETING: &str = "No meeting";
 
 fn no_meeting_row() -> MeetingRow {
@@ -570,6 +578,9 @@ fn bind_callbacks(
             let mut state = state.borrow_mut();
             state.settings.meeting_reminders_enabled = enabled;
             state.reminders.enabled.store(enabled, Ordering::Relaxed);
+            if !enabled {
+                state.reminders.in_call = false;
+            }
             persist_settings(&mut state);
             refresh_view(&ui, &state);
         });
@@ -879,6 +890,8 @@ fn check_meeting_reminders(
         .enabled
         .store(state.settings.meeting_reminders_enabled, Ordering::Relaxed);
     if !state.settings.meeting_reminders_enabled {
+        // Calls are not followed while reminders are off, so the next call seen is new.
+        state.reminders.in_call = false;
         return;
     }
     let delay = reminder_delay(state.settings.meeting_reminder_delay_minutes);
@@ -894,7 +907,8 @@ fn check_meeting_reminders(
     let defer = call.is_some_and(|in_call| in_call != Some(false));
     state.reminders.blocked.store(defer, Ordering::Relaxed);
     let in_call = call.flatten() == Some(true);
-    let call_started = in_call && state.reminders.history.record_call(now);
+    let continuing = state.reminders.in_call;
+    let call_started = in_call && state.reminders.history.record_call(now, continuing);
     let call_ended = state.reminders.in_call && call == Some(Some(false));
     let call_save_due = in_call
         && state
@@ -968,7 +982,7 @@ fn refresh_meetings_during_call(
 }
 
 fn in_call_lookup_due(state: &AppState, now: DateTime<FixedOffset>) -> bool {
-    let minutes = state.settings.in_call_refresh_minutes;
+    let minutes = effective_in_call_refresh_minutes(state.settings.in_call_refresh_minutes);
     if minutes == 0 || !state.capture_open || meetings_in_progress(&state.meetings, now) == 0 {
         return false;
     }
@@ -3063,7 +3077,7 @@ mod tests {
         state
             .reminders
             .history
-            .record_call(ended.start.unwrap() + TimeDelta::minutes(1));
+            .record_call(ended.start.unwrap() + TimeDelta::minutes(1), false);
         state.reminders.last_lookup = Some(Instant::now());
         let (notifier, jobs) = mpsc::channel();
         state.reminders.notifier = Some(notifier);
@@ -3122,6 +3136,27 @@ mod tests {
         assert!(
             job.blocked.load(Ordering::Relaxed),
             "the queued job sees it"
+        );
+    }
+
+    #[test]
+    fn calls_seen_before_and_after_reminders_were_off_are_separate() {
+        let now = Local::now().fixed_offset();
+        let (_window, mut state) = window_with(Vec::new(), now);
+        state.reminders.call_probe = Some(|| Some(true));
+        let (sender, _events) = mpsc::channel();
+
+        check_meeting_reminders(&mut state, &sender, now);
+        state.settings.meeting_reminders_enabled = false;
+        check_meeting_reminders(&mut state, &sender, now + TimeDelta::minutes(1));
+        assert!(!state.reminders.in_call);
+
+        state.settings.meeting_reminders_enabled = true;
+        check_meeting_reminders(&mut state, &sender, now + TimeDelta::hours(2));
+        assert_eq!(
+            state.reminders.history.calls.len(),
+            2,
+            "the gap while reminders were off is not bridged"
         );
     }
 
@@ -3204,6 +3239,15 @@ mod tests {
         assert!(in_call_lookup_due(&state, now));
         state.settings.in_call_refresh_minutes = minutes + 5;
         assert!(!in_call_lookup_due(&state, now), "a longer interval waits");
+        // A hand-edited 7 shows as "Every 10 minutes", and that is also what is used.
+        state.settings.in_call_refresh_minutes = 7;
+        let seven = Instant::now()
+            .checked_sub(Duration::from_secs(8 * 60))
+            .unwrap();
+        state.last_meeting_refresh = Some(seven);
+        assert_eq!(effective_in_call_refresh_minutes(7), 10);
+        assert!(!in_call_lookup_due(&state, now), "uses the shown interval");
+        state.last_meeting_refresh = Some(stale);
         state.settings.in_call_refresh_minutes = 0;
         assert!(!in_call_lookup_due(&state, now), "Off never checks");
         state.settings.in_call_refresh_minutes = minutes;

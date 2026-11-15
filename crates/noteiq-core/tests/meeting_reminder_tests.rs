@@ -31,7 +31,7 @@ fn looked_up(meetings: &[Meeting], minutes: i64) -> ReminderTracker {
 /// A history in which the user was in a call during `meeting()`.
 fn joined() -> ReminderHistory {
     let mut history = ReminderHistory::default();
-    history.record_call(end() - TimeDelta::minutes(10));
+    history.record_call(end() - TimeDelta::minutes(10), false);
     history
 }
 
@@ -75,9 +75,9 @@ fn only_meetings_the_user_was_in_a_call_for_are_reminded() {
     };
     // The call is seen before any calendar details, as when NoteIQ starts late in a meeting.
     let mut history = ReminderHistory::default();
-    assert!(history.record_call(end() - TimeDelta::minutes(1)));
+    assert!(history.record_call(end() - TimeDelta::minutes(1), false));
     assert!(
-        !history.record_call(end() - TimeDelta::seconds(30)),
+        !history.record_call(end() - TimeDelta::seconds(30), false),
         "the same call"
     );
     let tracker = looked_up(&[meeting(), earlier.clone()], 6);
@@ -106,7 +106,7 @@ fn a_call_that_runs_on_starts_the_reminder_window_when_it_ends() {
     let mut history = ReminderHistory::default();
     let mut at = end() - TimeDelta::minutes(5);
     while at <= after_end(3 * 60) {
-        history.record_call(at);
+        history.record_call(at, false);
         at += TimeDelta::seconds(30);
     }
     let tracker = looked_up(&[meeting()], 3 * 60);
@@ -119,6 +119,25 @@ fn a_call_that_runs_on_starts_the_reminder_window_when_it_ends() {
             .due(after_end(6 * 60), DELAY, &history, &[])
             .is_empty()
     );
+}
+
+#[test]
+fn checks_that_could_not_tell_do_not_split_a_call_that_runs_on() {
+    let mut history = ReminderHistory::default();
+    history.record_call(end() - TimeDelta::minutes(5), false);
+    // Checks that could not tell for 2.5 hours, then the same call is seen again.
+    assert!(!history.record_call(after_end(150), true));
+    assert_eq!(history.calls.len(), 1);
+    let tracker = looked_up(&[meeting()], 151);
+    assert_eq!(
+        ids(tracker.due(after_end(151), DELAY, &history, &[])),
+        ["event-42"],
+        "the window counts from the end of the call, not from before the gap"
+    );
+
+    // Without a call in progress, a long gap starts a new call.
+    assert!(history.record_call(after_end(400), false));
+    assert_eq!(history.calls.len(), 2);
 }
 
 #[test]
@@ -281,7 +300,7 @@ fn entries_saved_with_an_older_key_still_suppress_their_meeting() {
     let mut history = ReminderHistory::load(&path);
     assert!(history.contains(&meeting()));
     assert_eq!(history.meeting("ffffffffffffffff"), Some(&meeting()));
-    history.record_call(end() - TimeDelta::minutes(10));
+    history.record_call(end() - TimeDelta::minutes(10), false);
     let tracker = looked_up(&[meeting()], 6);
     assert!(tracker.due(after_end(6), DELAY, &history, &[]).is_empty());
 }

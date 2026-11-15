@@ -346,11 +346,13 @@ impl ReminderHistory {
     }
 
     /// Records that the user is in a call at `now`, extending the latest call when the
-    /// previous check also saw one. Returns whether a new call started, which is worth saving.
-    pub fn record_call(&mut self, now: DateTime<FixedOffset>) -> bool {
+    /// previous check also saw one, or when `continuing` says no check saw the call end since,
+    /// so checks that could not tell do not split a call. Returns whether a new call started,
+    /// which is worth saving.
+    pub fn record_call(&mut self, now: DateTime<FixedOffset>, continuing: bool) -> bool {
         if let Some(last) = self.calls.last_mut()
             && now >= last.end
-            && now - last.end <= CALL_GAP
+            && (continuing || now - last.end <= CALL_GAP)
         {
             last.end = now;
             return false;
