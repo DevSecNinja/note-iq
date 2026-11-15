@@ -9,6 +9,9 @@ and `crates/noteiq-core/tests/tidy_tests.rs`. Temperature 0 throughout.
 
 ## Summary
 
+**Decision: keep the built-in Windows model for Tidy up. Keep this harness to re-evaluate when
+newer models ship.**
+
 - **In-process works, with no identity and no server.** An unpackaged exe (no sparse package,
   no signing, no Developer Mode) found the NPU, ran models on it, and used no child process or
   listening port.
@@ -140,29 +143,40 @@ cold-start note. The query prefix matters: without it, the #29 set dropped to 2/
 Not reliably measured. Whole-system battery discharge was 22–25 W during runs, but idle varied
 20–28 W between runs because of background activity (`tools/foundry-bench/power.ps1`).
 
-## Recommendation
+## Decision
 
-**Go, narrowly: semantic search first. No-go for summaries and for changing Tidy up's model.**
+**Keep the built-in Windows model (Phi Silica) for Tidy up and add no Foundry Local models for
+now.** Keep `tools/foundry-bench` and re-run it in a few months, when newer models are available:
+Aion Instruct replaces Phi Silica on retail PCs in January 2027, and the Foundry Local catalog
+changes often.
 
-1. **Semantic search (opt-in).** It clears the bar and is low-risk: it only reads notes and
-   never changes them, so it doesn't need the review → Apply → Undo flow.
+No Foundry Local feature is ready to ship today:
+
+- Search is the one capability that clears the quality bar.
+- Follow-up extraction only works with a 7 GB model.
+- Summaries fail with every model.
+- The operational issues below would all need solving first.
+
+## When we re-evaluate
+
+1. **Semantic search: the strongest candidate.** It only reads notes and never changes them, so
+   it doesn't need the review → Apply → Undo flow.
    - Model: Qwen3-Embedding-0.6B (0.5 GB, Apache-2.0).
-   - Use the **CPU variant** until the WebGPU exit crash is fixed. It works on any Windows PC and
-     costs ~1 s per query, versus 155 ms on the GPU.
+   - Prefer the **CPU variant** unless the WebGPU exit crash is fixed. It works on any Windows PC
+     and costs ~1 s per query, versus 155 ms on the GPU.
    - Show which note matched and why (its title and the matching passage).
-   - Embeddings stay in a local index next to the settings, never in the vault.
-2. **Follow-up suggestions (experiment, not a feature yet).** Qwen2.5-7B on the NPU is the only
-   model that grounded every item. Before building it:
-   - Evaluate on a larger labelled set.
-   - Treat its cost as a known trade-off: 7 GB download, 7 GB RAM and 10 s load, inside NoteIQ's
-     process.
-   - If it ships, NoteIQ drops any item whose quote is not verbatim, and shows each suggestion
-     with its quote. The user ticks which ones go into `## Follow-ups`, then Apply / Undo.
+   - Keep embeddings in a local index next to the settings, never in the vault.
+2. **Follow-up suggestions.** Look for a smaller model that grounds every item as well as
+   Qwen2.5-7B did, and evaluate on a larger labelled set.
+   - Any version must drop items whose quote is not verbatim and show each suggestion with its
+     quote.
+   - The user ticks which suggestions go into `## Follow-ups`, then Apply / Undo.
    - Record the model id in front matter as provenance.
-3. **Tidy up stays on Phi Silica.** Revisit when Aion Instruct replaces it (January 2027 on retail
-   PCs; not available to test). A Foundry Local model (for example Phi-4-mini on CPU/GPU) could
-   later bring Tidy up to PCs without Phi Silica, but that is untested on non-Copilot+ hardware.
-4. **No summaries** with any tested model.
+3. **Tidy up.** Compare Aion Instruct against these results. A Foundry Local model (for example
+   Phi-4-mini on CPU/GPU) could bring Tidy up to PCs without the built-in model; that is untested
+   on non-Copilot+ hardware.
+4. **Summaries.** Only reconsider with a model that passes manual review, because
+   `fact_warnings` cannot catch invented claims.
 
 ### Prerequisites before any product work
 
@@ -186,5 +200,11 @@ Not reliably measured. Whole-system battery discharge was 22–25 W during runs,
 
 ## Reproduce
 
-See [`tools/foundry-bench/README.md`](../../tools/foundry-bench/README.md). Raw outputs from this
-run are kept with the investigation session, not in the repository.
+See [`tools/foundry-bench/README.md`](../../tools/foundry-bench/README.md). To re-evaluate:
+
+1. Run `catalog` to see new variants.
+2. Download candidates after checking their size and license.
+3. Run `measure.ps1 bench <id>` and `measure.ps1 search <id>`, then compare with the tables above.
+   Review the outputs by hand; `fact_warnings` and quote grounding are only first-pass checks.
+
+Raw outputs from this run are kept with the investigation session, not in the repository.
