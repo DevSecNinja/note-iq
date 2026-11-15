@@ -1,0 +1,20 @@
+# Research harness for #32: benchmarks Foundry Local models in-process.
+# Kept out of the root workspace so CI never builds it: its build script downloads
+# native runtime packages from NuGet.
+[package]
+name = "foundry-bench"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+foundry-local-sdk = "=2.4.1"
+noteiq-core = { path = "../../crates/noteiq-core" }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio-stream = "0.1"
+windows-sys = { version = "0.61", features = ["Win32_Storage_Packaging_Appx", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
+[workspace]

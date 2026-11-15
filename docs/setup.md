@@ -8,6 +8,9 @@
 - Visual Studio Build Tools with the matching x64 or ARM64 C++ linker and
   Windows 11 SDK to build the native executable.
 - Microsoft Scout, only when meeting context is wanted.
+- For the optional [on-device AI](#on-device-ai) Tidy up: a Copilot+ PC or a
+  supported GPU, the Windows App Runtime 2, and Developer Mode to register a
+  local build.
 
 Meeting context is optional. NoteIQ remains usable when Scout or WorkIQ is
 missing, unavailable, signed out, or unable to reach the WorkIQ service.
@@ -282,7 +285,8 @@ The front matter starts with the vault's properties: `kind: capture`,
 `source: manual`, `from` (a `[[Name]]` link to you, when known), `date`,
 `captured` (with milliseconds and UTC offset), `processing: raw`,
 `ai_refined: false`, `status: inbox`, and `tags` (`capture`, `note`, plus any of
-yours). With a meeting attached, `meeting`, `meeting_start`, `meeting_end`,
+yours). `ai_tidied: on-device` follows `ai_refined` while the Notes text holds an
+accepted [Tidy up](#on-device-ai). With a meeting attached, `meeting`, `meeting_start`, `meeting_end`,
 `organizer`, `your_rsvp`, the invitee lists, and `calendar_event_id` follow.
 NoteIQ's bookkeeping comes last: `id`, `updated`, `timezone`, `captured_via`
 (`shortcut`, `tray`, `cli`, `uri`, or `new_note`), and `noteiq_schema`.
@@ -329,6 +333,60 @@ Settings, it accepts `author_name` and `meeting_reminder_delay_minutes` (see
 [Note reminders after meetings](#note-reminders-after-meetings)). A hand-edited `note_filename` that is not
 valid falls back to the default, and the log records why without the template
 text.
+
+## On-device AI
+
+**Tidy up** rewrites a short note more concisely with the language model built
+into Windows. It runs on this PC, using the NPU on Copilot+ PCs, so the note is
+never sent anywhere. It is off until you turn on **Offer Tidy up for short
+notes** in **Settings**, which also shows whether this PC can run the model.
+
+Selecting the **Tidy up** toolbar button never changes the note directly:
+
+1. While the model runs (about 5 seconds), the note is read-only and **Cancel**
+   stops it.
+2. A review panel shows every change: removed text struck through in red, added
+   text underlined in green. Changed spaces, tabs, and line breaks show as `·`,
+   `→`, and `¶`. **Check before applying** lists changes that may
+   alter facts: numbers or names that were added or removed, a lost or added
+   "not", hedges such as "??" or "maybe" that now read as certain, a lost "me"
+   or "I", added symbols such as "$", or a much shorter result. These checks do
+   not catch every change in meaning; read the highlighted text too.
+3. **Apply** replaces the Notes text and adds `ai_tidied: on-device` to the
+   front matter. **Discard** or Esc keeps the note as it was.
+4. After applying, **Undo tidy-up** or Ctrl+Z restores the note and removes
+   `ai_tidied`. Once you edit the tidied text, the link becomes **Restore note
+   from before tidy-up**, which also discards those edits, and Ctrl+Z returns to
+   undoing your typing. Undo lasts while the note is open; after that, use
+   OneDrive version history.
+
+Only notes up to 700 characters can be tidied: in testing, longer notes were
+more likely to have facts merged or changed. Windows may add an invisible
+AI-generated text marker (`U+200B U+034F U+2060 U+200B`) to the result; NoteIQ
+keeps it and ignores it when comparing.
+
+### Requirements
+
+Windows only lets apps with a package identity use its on-device model, and the
+model needs a Copilot+ PC NPU or a supported NVIDIA or AMD GPU. Release ZIPs are
+not yet signed, so give a local build its identity:
+
+1. Turn on Developer Mode in Settings > System > For developers.
+2. Install the Windows App Runtime 2 if needed:
+   `winget install Microsoft.WindowsAppRuntime.2`.
+3. Build NoteIQ, then register its folder:
+
+   ```powershell
+   .\scripts\rebuild.ps1 -NoLaunch
+   .\scripts\register-package.ps1
+   ```
+
+4. Quit NoteIQ from the tray menu and start it again.
+
+The registration covers the build folder, so rebuilding in place keeps it.
+`cargo clean` deletes the package files under `target`; rerun the script
+afterwards. Run `.\scripts\register-package.ps1 -Unregister` to remove it.
+NoteIQ works as before without a registration; only Tidy up is unavailable.
 
 ## Scout and WorkIQ
 

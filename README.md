@@ -139,6 +139,20 @@ template, such as **General meeting**, **1:1**, **Customer call**, or
 `{title}` and `{attendees}` and never replace text you have typed. See
 [docs/setup.md](docs/setup.md#meeting-templates).
 
+On a Copilot+ PC, turn on **Offer Tidy up for short notes** in **Settings** to
+let the AI model built into Windows rewrite a short note more concisely, on this
+PC. You review a highlighted list of every change, with warnings about altered
+numbers, names, negations, and hedges, before applying it, and **Undo** or
+Ctrl+Z restores your note. Applied notes record `ai_tidied: on-device`. A local
+build needs a one-time Windows registration first; see
+[On-device AI](docs/setup.md#on-device-ai).
+
+<p align="center">
+  <img src="docs/images/tidy-up.gif" alt="NoteIQ tidying a rough meeting note on the NPU: the note is typed, Tidy up shows a review with removed text struck through in red, added text underlined in green, and warnings about a lost uncertainty marker and owner; Apply replaces the note, and Ctrl+Z restores the original" width="560">
+</p>
+
+<p align="center"><sub>Recorded on a Surface Laptop 7 (Snapdragon X Elite NPU). Typing is sped up, the wait for the model is shortened, and the pointer and key badge are added for clarity. People are fictional.</sub></p>
+
 The **Meeting** list starts with **No meeting**, followed by current, earlier,
 and upcoming meetings on two lines: the time and title, then details such as
 **Now**, how long the meeting runs, the organizer, and how many people are invited. A note attaches automatically

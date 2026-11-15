@@ -20,6 +20,11 @@ mod keyboard;
 #[cfg(windows)]
 mod launch;
 #[cfg(windows)]
+mod local_ai;
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod local_ai_bindings;
+#[cfg(windows)]
 mod meeting_ui;
 #[cfg(windows)]
 mod open_note;

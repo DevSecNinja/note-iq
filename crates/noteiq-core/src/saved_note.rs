@@ -35,6 +35,7 @@ pub(crate) struct RestoredDocument {
     pub notes_start: usize,
     pub meeting: Option<Meeting>,
     pub author: Option<String>,
+    pub ai_tidied: bool,
 }
 
 pub use crate::meeting::same_occurrence;
@@ -157,6 +158,9 @@ fn read_candidate(path: &Path, meeting: &Meeting) -> Result<Option<Capture>, Sav
         })
         .unwrap_or_default();
     capture.body = text[notes_start..].to_owned();
+    let tidied = &properties["ai_tidied"];
+    capture.ai_tidied =
+        !(tidied.is_badvalue() || tidied.is_null() || tidied.as_bool() == Some(false));
     capture.meeting = Some(meeting.clone());
     capture.meeting_decision = MeetingDecision::Selected;
     capture.path = Some(PathBuf::from(path));
@@ -166,6 +170,7 @@ fn read_candidate(path: &Path, meeting: &Meeting) -> Result<Option<Capture>, Sav
         notes_start,
         meeting: capture.meeting.clone(),
         author: capture.author.clone(),
+        ai_tidied: capture.ai_tidied,
     });
     Ok(Some(capture))
 }
@@ -320,6 +325,7 @@ pub(crate) fn render_restored(capture: &Capture, fresh: &str) -> String {
     let mut prefix = document.text[..document.notes_start].to_owned();
     let changed_meeting = document.meeting != capture.meeting;
     let changed_author = document.author != capture.author;
+    let changed_tidy = document.ai_tidied != capture.ai_tidied;
     let (start, end, _) = front_matter(&prefix).expect("validated front matter");
     let (fresh_start, fresh_end, _) = front_matter(fresh).expect("generated front matter");
     let new_properties = property_blocks(&fresh[fresh_start..fresh_end]);
@@ -350,7 +356,8 @@ pub(crate) fn render_restored(capture: &Capture, fresh: &str) -> String {
                 properties.push_str(line);
             }
         } else if !(changed_meeting && MEETING_KEYS.contains(&key)
-            || changed_author && key == "from")
+            || changed_author && key == "from"
+            || changed_tidy && key == "ai_tidied")
         {
             properties.push_str(block);
         } else {
@@ -364,6 +371,11 @@ pub(crate) fn render_restored(capture: &Capture, fresh: &str) -> String {
     }
     if changed_author
         && let Some((_, block)) = new_properties.iter().find(|(key, _)| *key == "from")
+    {
+        properties.push_str(&block.replace('\n', newline));
+    }
+    if changed_tidy
+        && let Some((_, block)) = new_properties.iter().find(|(key, _)| *key == "ai_tidied")
     {
         properties.push_str(&block.replace('\n', newline));
     }
@@ -442,5 +454,6 @@ pub(crate) fn advance_snapshot(capture: &mut Capture, contents: String) {
         document.text = contents;
         document.meeting = capture.meeting.clone();
         document.author = capture.author.clone();
+        document.ai_tidied = capture.ai_tidied;
     }
 }

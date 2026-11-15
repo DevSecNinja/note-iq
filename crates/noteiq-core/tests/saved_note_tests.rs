@@ -524,3 +524,42 @@ fn missing_summary_keeps_regenerated_meeting_details_before_editable_notes() {
         "Continued\n"
     );
 }
+
+#[test]
+fn ai_tidy_provenance_is_recorded_kept_on_reopen_and_removed_by_undo() {
+    let vault = tempdir().unwrap();
+    let destination = Destination::new(vault.path().into());
+    let mut capture = save(&destination, meeting("event", now()), "rough text");
+    let path = capture.path.clone().unwrap();
+    assert!(!fs::read_to_string(&path).unwrap().contains("ai_tidied"));
+
+    capture.set_body("Tidied text.");
+    capture.ai_tidied = true;
+    save_capture(&mut capture, &destination, now()).unwrap();
+    let tidied = fs::read_to_string(&path).unwrap();
+    assert!(tidied.contains("ai_refined: false\nai_tidied: on-device\nstatus: inbox\n"));
+
+    // A refinement made in the vault survives, and reopening keeps the provenance.
+    fs::write(
+        &path,
+        tidied.replace("processing: raw", "processing: refined"),
+    )
+    .unwrap();
+    let mut restored = find_meeting_note(&destination, capture.meeting.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert!(restored.ai_tidied);
+    restored.set_body("Tidied text, continued.");
+    save_capture(&mut restored, &destination, now()).unwrap();
+    let continued = fs::read_to_string(&path).unwrap();
+    assert!(continued.contains("ai_tidied: on-device\n"));
+    assert!(continued.contains("processing: refined\n"));
+
+    restored.set_body("rough text");
+    restored.ai_tidied = false;
+    save_capture(&mut restored, &destination, now()).unwrap();
+    let undone = fs::read_to_string(&path).unwrap();
+    assert!(!undone.contains("ai_tidied"));
+    assert!(undone.contains("processing: refined\n"));
+    assert!(undone.ends_with("rough text\n"));
+}

@@ -17,6 +17,8 @@ desktop = [
     "dep:slint",
     "dep:tray-icon",
     "dep:windows",
+    "dep:windows-core",
+    "dep:windows-future",
     "dep:windows-sys",
     "dep:winreg",
 ]
@@ -42,10 +44,14 @@ rfd = { version = "0.16", optional = true }
 slint = { version = "1.18", optional = true, features = ["backend-winit", "raw-window-handle-06", "unstable-winit-030"] }
 tray-icon = { version = "0.21", optional = true }
 windows = { version = "0.62", optional = true, features = [
+    "ApplicationModel",
     "Data_Xml_Dom",
     "Foundation",
     "UI_Notifications",
 ] }
+# Used by the checked-in Windows AI bindings in `src/local_ai_bindings.rs`.
+windows-core = { version = "0.62", optional = true }
+windows-future = { version = "0.3", optional = true }
 windows-sys = { version = "0.61", optional = true, features = [
     "Win32_Foundation",
     "Win32_Security_Authentication_Identity",

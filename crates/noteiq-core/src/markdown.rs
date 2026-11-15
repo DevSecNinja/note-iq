@@ -9,6 +9,9 @@ use thiserror::Error;
 /// Layout version written as `noteiq_schema`; version 4 uses an editable Notes section.
 pub const NOTE_SCHEMA: u32 = 4;
 
+/// Records that the Notes section holds an accepted on-device AI rewrite.
+pub(crate) const AI_TIDIED_PROPERTY: &str = "ai_tidied: on-device";
+
 const BASE_TAGS: [&str; 2] = ["capture", "note"];
 const FALLBACK_TITLE: &str = "Quick note";
 const MAX_TITLE_CHARS: usize = 80;
@@ -113,7 +116,11 @@ pub fn render_markdown(
         "captured: {}\n",
         precise_timestamp(capture.created_at)
     ));
-    output.push_str("processing: raw\nai_refined: false\nstatus: inbox\n");
+    output.push_str("processing: raw\nai_refined: false\n");
+    if capture.ai_tidied {
+        output.push_str(&format!("{AI_TIDIED_PROPERTY}\n"));
+    }
+    output.push_str("status: inbox\n");
     write_tags(&mut output, &capture.tags)?;
     if let Some(meeting) = &capture.meeting {
         write_meeting_properties(&mut output, meeting, clock)?;
