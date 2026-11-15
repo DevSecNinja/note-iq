@@ -174,9 +174,11 @@ fn response_message(status: LanguageModelResponseStatus) -> &'static str {
         LanguageModelResponseStatus::PromptLargerThanContext => {
             "This note is too long for the on-device AI model."
         }
+        // Windows detects the language itself and rejects short lowercase notes full of
+        // abbreviations, such as "deal alm closed", even when they are English.
         LanguageModelResponseStatus::UnsupportedLanguage
         | LanguageModelResponseStatus::LanguageMismatch => {
-            "The on-device AI model doesn't support this note's language."
+            "Windows couldn't recognize this note's language. Short notes with abbreviations often fail; try capitalizing names and acronyms or writing a full sentence."
         }
         LanguageModelResponseStatus::BlockedByPolicy => {
             "Your organization's policy blocks the on-device AI model."

@@ -36,6 +36,9 @@ mod reminder;
 #[cfg(windows)]
 mod settings_ui;
 #[cfg(windows)]
+#[allow(unsafe_code)]
+mod taskbar;
+#[cfg(windows)]
 mod toast;
 #[cfg(windows)]
 mod tray;

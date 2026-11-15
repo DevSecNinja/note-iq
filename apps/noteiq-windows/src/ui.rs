@@ -392,6 +392,7 @@ pub fn run(
                 .await
                 .map_err(|_| "native_window_unavailable")?;
             native.set_taskbar_icon(Some(icon));
+            crate::taskbar::use_own_taskbar_identity(&*native);
             Ok::<_, &'static str>(())
         }
         .await;
