@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/DevSecNinja/note-iq/compare/v0.4.0...v0.5.0) (2026-11-17)
+
+
+### Features
+
+* mark transcribed meetings and refresh them during a call ([#28](https://github.com/DevSecNinja/note-iq/issues/28)) ([d7a4ab4](https://github.com/DevSecNinja/note-iq/commit/d7a4ab4594be10625d7cef880d8a94858133bdbd))
+* tidy up short notes with on-device AI ([#30](https://github.com/DevSecNinja/note-iq/issues/30)) ([57d02b2](https://github.com/DevSecNinja/note-iq/commit/57d02b2f2f449c4b6325386361d8548ba8d978ac))
+
+
+### Bug Fixes
+
+* keep NoteIQ's taskbar icon and explain language errors in Tidy up ([#36](https://github.com/DevSecNinja/note-iq/issues/36)) ([341a083](https://github.com/DevSecNinja/note-iq/commit/341a08365e902dd2e37f715219b79b5952bfc66b))
+* **reminders:** keep calls whole across unclear checks and honor the shown interval ([#35](https://github.com/DevSecNinja/note-iq/issues/35)) ([19ca36e](https://github.com/DevSecNinja/note-iq/commit/19ca36e8f363fed5e6a30e66506e4c56653de1f9))
+
 ## [0.4.0](https://github.com/DevSecNinja/note-iq/compare/v0.3.0...v0.4.0) (2026-11-12)
 
 
