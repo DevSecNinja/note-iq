@@ -36,8 +36,7 @@ installation is in progress).
 **Storage**: Markdown files under the one configured destination;
 user-scoped TOML settings and rolling app logs under OS application-data paths.
 
-**Testing**: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets
--- -D warnings`, and portable tests on `ubuntu-24.04` and `ubuntu-24.04-arm`;
+**Testing**: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and portable tests on `ubuntu-24.04` and `ubuntu-24.04-arm`;
 Windows desktop Clippy/tests and native release builds on `windows-2025`
 (x64) and `windows-11-arm` (ARM64), using each runner's MSVC linker and Windows
 SDK.
