@@ -1,10 +1,17 @@
 <p align="center">
-  <img src="apps/noteiq-windows/assets/noteiq.svg" alt="NoteIQ logo" width="96" height="96">
+  <img
+    src="apps/noteiq-windows/assets/noteiq.svg"
+    alt="NoteIQ logo"
+    width="96"
+    height="96"
+  >
 </p>
 
 <h1 align="center">NoteIQ</h1>
 
-<p align="center"><strong>Quick-capture Markdown notes for Windows, with meeting context built in.</strong></p>
+<p align="center">
+  <strong>Quick-capture Markdown notes for Windows, with meeting context built in.</strong>
+</p>
 
 NoteIQ is a Windows x64 and ARM64 quick-capture app for Markdown notes. It opens a
 small editor, timestamps each capture, optionally adds current-meeting context
@@ -24,7 +31,11 @@ overwriting other notes. Closed notes are never renamed, and a changed setting
 applies only to new notes.
 
 <p align="center">
-  <img src="docs/images/capture-window.png" alt="The NoteIQ capture window: a meeting list with New note, Open note, and Settings buttons above the note editor, and a Saved status line below it" width="480">
+  <img
+    src="docs/images/capture-window.png"
+    alt="The NoteIQ capture window: a meeting list with New note, Open note, and Settings buttons above the note editor, and a Saved status line below it"
+    width="480"
+  >
 </p>
 
 <p align="center">
@@ -34,7 +45,9 @@ applies only to new notes.
   <a href="docs/images/settings.png"><img src="docs/images/settings.png" alt="The settings panel" width="180"></a>
 </p>
 
-<p align="center"><sub>Mockups. Select an image to enlarge it. Meetings and people are fictional.</sub></p>
+<p align="center">
+  <sub>Mockups. Select an image to enlarge it. Meetings and people are fictional.</sub>
+</p>
 
 ## Build and test
 
@@ -131,7 +144,11 @@ untranscribed meetings** in **Settings**. See
 [docs/setup.md](docs/setup.md#note-reminders-after-meetings).
 
 <p align="center">
-  <img src="docs/images/meeting-reminder.png" alt="A Windows notification from NoteIQ: Write a quick note for Q4 roadmap review? 14:00–14:30 · Alex Morgan. This meeting wasn't transcribed. Capture the key points while they're fresh. Buttons: Write note, Dismiss" width="440">
+  <img
+    src="docs/images/meeting-reminder.png"
+    alt="A Windows notification from NoteIQ: Write a quick note for Q4 roadmap review? 14:00–14:30 · Alex Morgan. This meeting wasn't transcribed. Capture the key points while they're fresh. Buttons: Write note, Dismiss"
+    width="440"
+  >
 </p>
 
 Turn on **Meeting templates** in **Settings** to start each meeting note from a
@@ -149,10 +166,16 @@ build needs a one-time Windows registration first; see
 [On-device AI](docs/setup.md#on-device-ai).
 
 <p align="center">
-  <img src="docs/images/tidy-up.gif" alt="NoteIQ tidying a rough meeting note on the NPU: the note is typed, Tidy up shows a review with removed text struck through in red, added text underlined in green, and warnings about a lost uncertainty marker and owner; Apply replaces the note, and Ctrl+Z restores the original" width="560">
+  <img
+    src="docs/images/tidy-up.gif"
+    alt="NoteIQ tidying a rough meeting note on the NPU: the note is typed, Tidy up shows a review with removed text struck through in red, added text underlined in green, and warnings about a lost uncertainty marker and owner; Apply replaces the note, and Ctrl+Z restores the original"
+    width="560"
+  >
 </p>
 
-<p align="center"><sub>Recorded on a Surface Laptop 7 (Snapdragon X Elite NPU). Typing is sped up, the wait for the model is shortened, and the pointer and key badge are added for clarity. People are fictional.</sub></p>
+<p align="center">
+  <sub>Recorded on a Surface Laptop 7 (Snapdragon X Elite NPU). Typing is sped up, the wait for the model is shortened, and the pointer and key badge are added for clarity. People are fictional.</sub>
+</p>
 
 The **Meeting** list starts with **No meeting**, followed by current, earlier,
 and upcoming meetings on two lines: the time and title, then details such as
